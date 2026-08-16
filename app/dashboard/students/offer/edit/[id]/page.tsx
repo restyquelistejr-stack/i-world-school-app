@@ -13,6 +13,8 @@ interface Offer {
   status: string;
   selected_subjects: string[];
   schedule: any;
+  created_at: string; // ✅ Added this to fix the type error
+  updated_at?: string; // ✅ Optional, but good to have
   student?: {
     id: string;
     full_name: string;
