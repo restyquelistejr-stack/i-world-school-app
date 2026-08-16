@@ -55,7 +55,15 @@ export default function TeacherAvailabilityPage() {
         .order('full_name');
 
       if (error) throw error;
-      setTeachers(data || []);
+
+      // --- FIX: Map the Supabase 'teacher_availability' to the interface 'availability' ---
+      const formattedData = (data || []).map((teacher: any) => ({
+        ...teacher,
+        availability: teacher.teacher_availability || [],
+      }));
+      // --------------------------------------------------------------------------------
+
+      setTeachers(formattedData);
     } catch (error) {
       console.error('Error loading teachers:', error);
       alert('Failed to load teachers');
