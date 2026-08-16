@@ -1,0 +1,265 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+
+interface Teacher {
+  id: string;
+  full_name: string;
+  email: string;
+  specialization: string | null;
+  is_active: boolean;
+}
+
+interface AssignedTeacher {
+  id: string;
+  teacher_id: string;
+  course_id: string;
+  teacher: Teacher;
+}
+
+export default function AssignTeachersPage() {
+  const params = useParams();
+  const router = useRouter();
+  const courseId = params.id as string;
+
+  const [courseName, setCourseName] = useState('');
+  const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
+  const [assignedTeachers, setAssignedTeachers] = useState<AssignedTeacher[]>([]);
+  const [selectedTeacherId, setSelectedTeacherId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (courseId) {
+      loadData();
+    }
+  }, [courseId]);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      // Get course name
+      const { data: course, error: courseError } = await supabase
+        .from('courses')
+        .select('name')
+        .eq('id', courseId)
+        .single();
+
+      if (courseError) {
+        console.error('Error loading course:', courseError);
+      } else if (course) {
+        setCourseName(course.name);
+      }
+
+      // Get all active teachers
+      const { data: teachers, error: teachersError } = await supabase
+        .from('teachers')
+        .select('id, full_name, email, specialization, is_active')
+        .eq('is_active', true)
+        .order('full_name');
+
+      if (teachersError) {
+        console.error('Error loading teachers:', teachersError);
+      } else if (teachers) {
+        setAllTeachers(teachers);
+      }
+
+      // Get assigned teachers for this course
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('teacher_course_assignments')
+        .select(`
+          id,
+          teacher_id,
+          course_id,
+          teacher:teachers!inner(id, full_name, email, specialization)
+        `)
+        .eq('course_id', courseId)
+        .eq('is_active', true);
+
+      if (assignmentsError) {
+        console.error('Error loading assignments:', assignmentsError);
+      } else if (assignments) {
+        // Transform the data to match our interface
+        const formattedAssignments: AssignedTeacher[] = assignments.map((item: any) => ({
+          id: item.id,
+          teacher_id: item.teacher_id,
+          course_id: item.course_id,
+          teacher: {
+            id: item.teacher.id,
+            full_name: item.teacher.full_name,
+            email: item.teacher.email,
+            specialization: item.teacher.specialization,
+            is_active: true,
+          }
+        }));
+        setAssignedTeachers(formattedAssignments);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+    setLoading(false);
+  }
+
+  async function assignTeacher() {
+    if (!selectedTeacherId) {
+      alert('Please select a teacher');
+      return;
+    }
+
+    // Check if already assigned
+    if (assignedTeachers.some(a => a.teacher_id === selectedTeacherId)) {
+      alert('This teacher is already assigned to this course');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('teacher_course_assignments')
+        .insert({
+          teacher_id: selectedTeacherId,
+          course_id: courseId,
+          is_active: true,
+        });
+
+      if (error) {
+        console.error('Insert error:', error);
+        throw error;
+      }
+
+      alert('✅ Teacher assigned successfully!');
+      setSelectedTeacherId('');
+      await loadData(); // Refresh
+    } catch (error: any) {
+      console.error('Error:', error);
+      alert('Error: ' + (error.message || 'Failed to assign teacher'));
+    }
+    setSaving(false);
+  }
+
+  async function removeAssignment(assignmentId: string, teacherName: string) {
+    if (!confirm(`Remove ${teacherName} from this course?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('teacher_course_assignments')
+        .update({ is_active: false })
+        .eq('id', assignmentId);
+
+      if (error) {
+        console.error('Update error:', error);
+        throw error;
+      }
+
+      await loadData(); // Refresh
+    } catch (error: any) {
+      console.error('Error:', error);
+      alert('Error: ' + (error.message || 'Failed to remove teacher'));
+    }
+  }
+
+  const availableTeachers = allTeachers.filter(
+    t => !assignedTeachers.some(a => a.teacher_id === t.id)
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="flex items-center gap-4 mb-6">
+        <Link href={`/dashboard/academics/courses/${courseId}/edit`}>
+          <button className="text-gray-600 hover:text-gray-900">← Back to Course</button>
+        </Link>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Assign Teachers - {courseName}
+        </h1>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 space-y-6">
+        {/* Assign New Teacher */}
+        <div className="border-b pb-4">
+          <h3 className="font-medium text-gray-800 mb-3">Assign New Teacher</h3>
+          <div className="flex gap-3">
+            <select
+              value={selectedTeacherId}
+              onChange={(e) => setSelectedTeacherId(e.target.value)}
+              className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select a teacher...</option>
+              {availableTeachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.full_name} {teacher.specialization ? `- ${teacher.specialization}` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={assignTeacher}
+              disabled={saving || !selectedTeacherId}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+            >
+              {saving ? 'Assigning...' : 'Assign'}
+            </button>
+          </div>
+          {availableTeachers.length === 0 && allTeachers.length > 0 && (
+            <p className="text-sm text-gray-500 mt-2">
+              All available teachers are already assigned to this course.
+            </p>
+          )}
+          {allTeachers.length === 0 && (
+            <p className="text-sm text-yellow-600 mt-2">
+              ⚠️ No teachers found. Please add teachers to the system first.
+            </p>
+          )}
+        </div>
+
+        {/* Assigned Teachers List */}
+        <div>
+          <h3 className="font-medium text-gray-800 mb-3">
+            Assigned Teachers ({assignedTeachers.length})
+          </h3>
+          {assignedTeachers.length === 0 ? (
+            <p className="text-gray-500 text-sm">No teachers assigned yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {assignedTeachers.map((assignment) => (
+                <div
+                  key={assignment.id}
+                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+                >
+                  <div>
+                    <p className="font-medium text-gray-800">
+                      {assignment.teacher.full_name}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      {assignment.teacher.email}
+                      {assignment.teacher.specialization && (
+                        <span className="ml-2 inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
+                          {assignment.teacher.specialization}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => removeAssignment(assignment.id, assignment.teacher.full_name)}
+                    className="text-red-500 hover:text-red-700 text-sm transition"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
