@@ -24,6 +24,7 @@ interface Teacher {
   availability: any[];
   active_classes: number;
   match_score: number;
+  rate: number;
 }
 
 interface PendingEnrollment {
@@ -161,6 +162,7 @@ export default function TeacherMatchingDashboard() {
           if (teacherProfile.years_experience > 5) matchScore += 10;
           if ((activeClasses || 0) < 3) matchScore += 10;
 
+          // --- FIX: Ensure the returned object matches the Teacher Interface ---
           return {
             id: teacher.id,
             full_name: teacher.full_name,
@@ -168,10 +170,12 @@ export default function TeacherMatchingDashboard() {
             profile_headline: teacherProfile?.profile_headline || '',
             years_experience: teacherProfile?.years_experience || 0,
             rate: ts.rate || 0,
+            subjects: [subjectId], // ✅ Added subjects array to match interface
             availability: availability || [],
             active_classes: activeClasses || 0,
             match_score: Math.min(matchScore, 100),
           };
+          // -------------------------------------------------------------------
         })
       );
 
