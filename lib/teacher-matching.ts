@@ -1,5 +1,7 @@
 // lib/teacher-matching.ts
 
+import { supabase } from '@/lib/supabaseClient'; // ✅ FIXED: Added required import
+
 interface TeacherMatch {
   teacher_id: string;
   full_name: string;
@@ -43,7 +45,7 @@ export async function findQualifiedTeachers(
     return [];
   }
 
-  const teacherIds = qualifiedTeachers.map(t => t.teacher_id);
+const teacherIds = (qualifiedTeachers as any[] || []).map(t => t.teacher_id);
 
   // 2. Get teacher availability for the requested schedule
   const daysNeeded = [...new Set(sessions.map(s => new Date(s.session_date).getDay()))];
@@ -92,7 +94,10 @@ export async function findQualifiedTeachers(
     // Calculate score (0-100)
     const availabilityScore = (sessionMatches.length / sessions.length) * 100;
     const experienceScore = Math.min((teacher.subject_experience || 0) * 10, 30);
-    const loadScore = Math.max(0, 100 - ((teacher.current_load || 0) * 10));
+    
+    // ✅ FIXED: Safe access to current_load (default to 0 if it doesn't exist)
+    const currentLoad = teacher.current_load || 0;
+    const loadScore = Math.max(0, 100 - (currentLoad * 10));
     
     const totalScore = (availabilityScore * 0.6) + (experienceScore * 0.3) + (loadScore * 0.1);
 
@@ -106,7 +111,7 @@ export async function findQualifiedTeachers(
         match_percentage: Math.round(availabilityScore),
       },
       experience: teacher.subject_experience || 0,
-      current_load: teacher.current_load || 0,
+      current_load: currentLoad,
       qualifications: [teacher.teachers?.specialization].filter(Boolean),
       conflicts: conflicts.map(c => c.id),
       available_sessions: sessionMatches,
