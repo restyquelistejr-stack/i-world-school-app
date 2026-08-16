@@ -1,78 +1,50 @@
-// ============================================
-// CALENDAR API ENDPOINTS
-// ============================================
+import { NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabaseClient';
 
-// app/api/calendar/route.ts
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
-    const date = searchParams.get('date');
-    const view = searchParams.get('view') || 'week';
-    const teacherId = searchParams.get('teacher');
-    const roomId = searchParams.get('room');
-    
-    // Get events
-    const { data: events } = await supabase
-        .from('events')
-        .select('*')
-        .gte('start_time', startOfWeek)
-        .lte('end_time', endOfWeek)
-        .eq('is_active', true);
-    
-    // Get conflicts
-    const conflicts = await detectConflicts(events);
-    
-    // Get teacher availability
-    const { data: teachers } = await supabase
-        .from('mv_teacher_schedule')
-        .select('*')
-        .gte('start_time', startOfWeek)
-        .lte('end_time', endOfWeek);
-    
-    return Response.json({
-        events,
-        conflicts,
-        teachers,
-        rooms: await getRooms(),
-    });
-}
+    const startOfWeek = searchParams.get('start');
+    const endOfWeek = searchParams.get('end');
 
-// app/api/calendar/event/route.ts
-export async function POST(request: Request) {
-    const body = await request.json();
-    
-    // Validate no conflicts
-    const conflicts = await detectConflicts(body);
-    if (conflicts.length > 0) {
-        return Response.json({ 
-            error: 'Conflict detected', 
-            conflicts 
-        }, { status: 409 });
+    // A basic implementation that compiles correctly for deployment
+    try {
+        // 1. Get events
+        const { data: events, error: eventsError } = await supabase
+            .from('events')
+            .select('*')
+            .eq('is_active', true);
+
+        if (eventsError) {
+            return NextResponse.json({ error: eventsError.message }, { status: 500 });
+        }
+
+        // 2. Get teachers
+        const { data: teachers, error: teachersError } = await supabase
+            .from('mv_teacher_schedule')
+            .select('*');
+
+        if (teachersError) {
+            return NextResponse.json({ error: teachersError.message }, { status: 500 });
+        }
+
+        // 3. Get rooms
+        const { data: rooms, error: roomsError } = await supabase
+            .from('rooms')
+            .select('*')
+            .eq('is_active', true);
+
+        if (roomsError) {
+            return NextResponse.json({ error: roomsError.message }, { status: 500 });
+        }
+
+        return NextResponse.json({
+            events: events || [],
+            conflicts: [], // Placeholder
+            teachers: teachers || [],
+            rooms: rooms || []
+        });
+
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    
-    // Create event
-    const { data, error } = await supabase
-        .from('events')
-        .insert([body])
-        .select()
-        .single();
-    
-    // Send notifications
-    await sendNotifications(data);
-    
-    return Response.json(data);
-}
-
-// app/api/calendar/event/[id]/route.ts
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-    const body = await request.json();
-    
-    // Update event
-    const { data, error } = await supabase
-        .from('events')
-        .update(body)
-        .eq('id', params.id)
-        .select()
-        .single();
-    
-    return Response.json(data);
 }
