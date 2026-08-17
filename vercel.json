@@ -1,4 +1,10 @@
 {
   "outputDirectory": ".next",
-  "buildCommand": "next build"
+  "buildCommand": "next build",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ]
 }
