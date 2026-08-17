@@ -12,7 +12,7 @@ const menuItems = [
     icon: '📚',
     children: [
       { title: 'Courses', href: '/dashboard/academics/courses' },
-      { title: 'Class Schedule', href: '/dashboard/classes/calendar' },
+      // { title: 'Class Schedule', href: '/dashboard/classes/calendar' },
     ]
   },
   { 
@@ -21,7 +21,7 @@ const menuItems = [
     children: [
       { title: 'Directory', href: '/dashboard/students/directory' },
       { title: 'Registration', href: '/dashboard/students/registration' },
-      { title: 'Enrollments', href: '/dashboard/students/enrollments' },
+      // { title: 'Enrollments', href: '/dashboard/students/enrollments' },
     ]
   },
   { 
@@ -116,7 +116,7 @@ export default function DashboardLayout({
       <header className="bg-white shadow-sm sticky top-0 z-50 border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
           <Link href="/dashboard" className="text-xl font-bold text-blue-600 hover:text-blue-700">
-            🏫 School of Nation
+            🏫 iWorld Learning Center
           </Link>
           
           <div className="flex items-center gap-4">

@@ -264,22 +264,22 @@ export default function TeacherCalendarPage() {
 
   const getStatusColor = (status: string) => {
     const map: Record<string, string> = {
-      confirmed: 'bg-green-100 text-green-800 border-green-200',
-      in_progress: 'bg-blue-100 text-blue-800 border-blue-200',
-      completed: 'bg-gray-100 text-gray-800 border-gray-200',
-      cancelled: 'bg-red-100 text-red-800 border-red-200',
-      pending: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      confirmed: 'bg-green-100 border-green-400 text-green-800',
+      in_progress: 'bg-blue-100 border-blue-400 text-blue-800',
+      completed: 'bg-gray-100 border-gray-400 text-gray-800',
+      cancelled: 'bg-red-100 border-red-400 text-red-800',
+      pending: 'bg-yellow-100 border-yellow-400 text-yellow-800',
     };
-    return map[status] || 'bg-gray-100 text-gray-800 border-gray-200';
+    return map[status] || 'bg-gray-100 border-gray-400 text-gray-800';
   };
 
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
-      confirmed: 'Confirmed',
-      in_progress: 'In Progress',
-      completed: 'Completed',
-      cancelled: 'Cancelled',
-      pending: 'Pending',
+      confirmed: '✅ Confirmed',
+      in_progress: '🔄 In Progress',
+      completed: '✅ Completed',
+      cancelled: '❌ Cancelled',
+      pending: '⏳ Pending',
     };
     return map[status] || status;
   };
@@ -355,26 +355,46 @@ export default function TeacherCalendarPage() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* NEW: Quick access button to Attendance Page */}
-          <Link href={`/dashboard/staff/attendance?date=${format(new Date(), 'yyyy-MM-dd')}`}>
-            <button className="px-3 py-1.5 text-sm font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm">
-              📋 Take Attendance
+        <div className="flex flex-wrap items-center gap-2">
+          
+          {/* Layout: [Today] [<- Date Range ->] [Day] [Week] | [Class Schedule] */}
+          <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 shadow-sm">
+            {/* Today Button */}
+            <button onClick={goToToday} className="px-3 py-1.5 text-sm rounded-lg bg-gray-200 hover:bg-gray-300">Today</button>
+
+            {/* Navigation Arrows */}
+            <div className="flex items-center gap-1 border-l border-r border-gray-200 px-1 mx-1">
+              <button onClick={() => navigate('prev')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">←</button>
+              <span className="text-lg font-semibold min-w-[160px] text-center hidden sm:block">
+                {viewMode === 'day' ? format(selectedDate, 'MMM d, yyyy') : `${format(weekDaysArray[0], 'MMM d')} - ${format(weekDaysArray[6], 'MMM d')}`}
+              </span>
+              <button onClick={() => navigate('next')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">→</button>
+            </div>
+
+            {/* Day / Week Toggle */}
+            <div className="flex bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <button onClick={() => setViewMode('day')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📅 Day</button>
+              <button onClick={() => setViewMode('week')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📆 Week</button>
+            </div>
+          </div>
+
+          {/* Separator & Class Schedule Button (Goes back to Room Calendar) */}
+          <Link href="/dashboard/classes/calendar">
+            <button className="px-4 py-2 text-xs font-medium bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition shadow-sm flex items-center gap-2">
+              <span>📅</span> Class Schedule
             </button>
           </Link>
 
-          <button onClick={goToToday} className="px-3 py-1.5 text-sm rounded-lg bg-gray-200 hover:bg-gray-300">Today</button>
-          <button onClick={() => navigate('prev')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">←</button>
-          <span className="text-lg font-semibold min-w-[160px] text-center hidden sm:block">
-            {viewMode === 'day' ? format(selectedDate, 'MMM d, yyyy') : `${format(weekDaysArray[0], 'MMM d')} - ${format(weekDaysArray[6], 'MMM d')}`}
-          </span>
-          <button onClick={() => navigate('next')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">→</button>
-          
-          <div className="border-l pl-3 ml-1 flex gap-1">
-            <button onClick={() => setViewMode('day')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📅 Day</button>
-            <button onClick={() => setViewMode('week')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📆 Week</button>
-          </div>
         </div>
+      </div>
+
+      {/* Second Row Action Buttons: Take Attendance */}
+      <div className="flex flex-wrap items-center gap-3 mb-6 pb-4 border-b border-gray-200">
+        <Link href={`/dashboard/staff/attendance?date=${format(selectedDate, 'yyyy-MM-dd')}`}>
+          <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-bold shadow-sm flex items-center gap-2">
+            <span>📋</span> Take Attendance
+          </button>
+        </Link>
       </div>
 
       {/* CLASSIC TIMESHEET UI */}

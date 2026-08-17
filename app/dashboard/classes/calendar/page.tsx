@@ -14,7 +14,7 @@ import {
   addHours,
   formatISO
 } from 'date-fns';
-import Link from 'next/link'; // ✅ Added Link
+import Link from 'next/link';
 
 interface Booking {
   id: string;
@@ -511,47 +511,77 @@ export default function ClassCalendarPage() {
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
+      
+      {/* PREMIUM HEADER BLOCK */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4 pb-6 border-b border-gray-200">
+        
+        {/* Left side: Title */}
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">📅 Class Schedule Calendar</h1>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+            <span className="text-3xl">📅</span> Class Schedule
+          </h1>
           <p className={`text-xs mt-1 ${debugInfo.includes('Error') ? 'text-red-500' : 'text-gray-400'}`}>
-            Debug: {debugInfo}
+            {debugInfo}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button onClick={addTestBooking} className="px-3 py-1.5 text-xs font-bold bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-sm">➕ Add Test Booking</button>
-          <button onClick={() => setShowManageView(!showManageView)} className={`px-3 py-1.5 text-xs font-bold rounded-lg transition shadow-sm ${showManageView ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}>
-            {showManageView ? '📅 Back to Calendar' : '📋 Manage Bookings'}
-          </button>
-          {!showManageView && (
-            <>
-              <button onClick={goToToday} className={`px-3 py-1.5 text-sm rounded-lg transition ${(viewMode === 'day' ? isToday(selectedDate) : isCurrentWeek(selectedDate)) ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>Today</button>
-              <button onClick={() => navigate('prev')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">←</button>
-              <span className="text-lg font-semibold min-w-[160px] text-center hidden sm:block">
+
+        {/* Right side: Navigation Controls */}
+        {/* Layout: [Today] [<- Date Range ->] [Day] [Week] | [Teachers] */}
+        <div className="flex flex-wrap items-center gap-2">
+          
+          <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 shadow-sm">
+            {/* Today Button */}
+            <button 
+              onClick={goToToday} 
+              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+                (viewMode === 'day' ? isToday(selectedDate) : isCurrentWeek(selectedDate)) 
+                ? 'bg-blue-600 text-white shadow-sm' 
+                : 'text-gray-600 hover:bg-white hover:shadow-sm'
+              }`}
+            >
+              Today
+            </button>
+
+            {/* Navigation Arrows */}
+            <div className="flex items-center gap-1 border-l border-r border-gray-200 px-1 mx-1">
+              <button onClick={() => navigate('prev')} className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-white rounded transition">
+                ←
+              </button>
+              <span className="text-sm font-semibold min-w-[140px] text-center text-gray-800 px-2">
                 {viewMode === 'day' ? format(selectedDate, 'MMM d, yyyy') : `${format(weekDaysArray[0], 'MMM d')} - ${format(weekDaysArray[6], 'MMM d')}`}
               </span>
-              <button onClick={() => navigate('next')} className="px-3 py-1.5 text-sm bg-gray-200 rounded-lg hover:bg-gray-300">→</button>
+              <button onClick={() => navigate('next')} className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-white rounded transition">
+                →
+              </button>
+            </div>
 
-              <div className="border-l pl-3 ml-1 flex gap-2">
-                {/* ✅ ADDED: Teachers and Students Buttons */}
-                <Link href="/dashboard/staff/teachers/calendar">
-                  <button className="px-3 py-1 text-xs font-medium bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                    👨‍🏫 Teachers
-                  </button>
-                </Link>
-                <Link href="/dashboard/students/enrollments">
-                  <button className="px-3 py-1 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 transition">
-                    👩‍🎓 Students
-                  </button>
-                </Link>
+            {/* Day / Week Toggle */}
+            <div className="flex bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <button 
+                onClick={() => setViewMode('day')} 
+                className={`px-3 py-1.5 text-xs font-medium transition ${viewMode === 'day' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Day
+              </button>
+              <button 
+                onClick={() => setViewMode('week')} 
+                className={`px-3 py-1.5 text-xs font-medium transition border-l border-gray-200 ${viewMode === 'week' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Week
+              </button>
+            </div>
+          </div>
 
-                <button onClick={() => setViewMode('day')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📅 Day</button>
-                <button onClick={() => setViewMode('week')} className={`px-3 py-1 text-sm rounded transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>📆 Week</button>
-              </div>
-            </>
-          )}
+          {/* Separator & Teachers Button */}
+          <Link href="/dashboard/staff/teachers/calendar">
+            <button className="px-4 py-2 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm flex items-center gap-2">
+              👨‍🏫 Teachers
+            </button>
+          </Link>
+
         </div>
       </div>
+      {/* END PREMIUM HEADER BLOCK */}
 
       <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
         {showManageView ? renderManageView() : (viewMode === 'day' ? renderDayView() : renderWeekView())}

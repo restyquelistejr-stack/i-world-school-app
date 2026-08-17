@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "https://esbuild.deno.dev/@supabase/supabase-js@2"
+  }
+}
