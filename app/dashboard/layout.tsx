@@ -12,6 +12,8 @@ const menuItems = [
     icon: '📚',
     children: [
       { title: 'Courses', href: '/dashboard/academics/courses' },
+      { title: 'Inventory', href: '/dashboard/academics/inventory' },
+
       // { title: 'Class Schedule', href: '/dashboard/classes/calendar' },
     ]
   },
