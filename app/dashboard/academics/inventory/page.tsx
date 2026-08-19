@@ -225,8 +225,16 @@ export default function InventoryPage() {
       .eq('book_id', bookId)
       .order('checked_out_at', { ascending: false });
       
-    if (!error) setCheckoutHistory(data || []);
-    else alert('Error loading history: ' + error.message);
+    if (!error) {
+      // ✅ FIX: Map the Supabase response to match the CheckoutRecord interface
+      const formattedHistory = (data || []).map((record: any) => ({
+        ...record,
+        student: record.student?.[0] || { full_name: 'Unknown' }
+      }));
+      setCheckoutHistory(formattedHistory);
+    } else {
+      alert('Error loading history: ' + error.message);
+    }
   }
 
   async function handleReturnBook(checkoutId: string) {
