@@ -122,7 +122,7 @@ export default function DashboardPage() {
         const startHour = 9;
         const endHour = 21;
 
-        Object.entries(roomMap).forEach(([id, info]) => {
+        Object.entries(roomMap).forEach(([id, info]: any) => { // ✅ FIX: Added `: any` to info
           const slots = [];
           for (let h = startHour; h < endHour; h++) {
             slots.push({ time: `${h}:00`, occupied: false });
