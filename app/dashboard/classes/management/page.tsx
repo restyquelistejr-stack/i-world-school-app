@@ -23,7 +23,7 @@ interface Room {
 
 interface ClassRecord {
   id: string;
-  class_code: string; // ✅ Added
+  class_code: string;
   course_id: string;
   teacher_id: string | null;
   room_id: string | null;
@@ -34,7 +34,6 @@ interface ClassRecord {
   course?: Course;
   teacher?: Teacher;
   room?: Room;
-  // Added dynamic fields
   level?: string;
   start_date?: string;
   end_date?: string;
@@ -73,7 +72,6 @@ export default function ManageClasses() {
   async function loadData() {
     setLoading(true);
     try {
-      // 1. Fetch Static Data
       const [coursesRes, teachersRes, roomsRes] = await Promise.all([
         supabase.from('courses').select('id, name').eq('is_active', true).order('name'),
         supabase.from('users').select('id, full_name').eq('role', 'teacher').eq('is_active', true).order('full_name'),
@@ -84,7 +82,6 @@ export default function ManageClasses() {
       if (!teachersRes.error) setTeachers(teachersRes.data || []);
       if (!roomsRes.error) setRooms(roomsRes.data || []);
 
-      // 2. Fetch Classes
       const { data: classesData, error: classesError } = await supabase
         .from('classes')
         .select('*')
@@ -94,7 +91,6 @@ export default function ManageClasses() {
         console.error("Error fetching classes:", classesError);
         setClasses([]);
       } else {
-        // 3. Enrich each class with Level, Dates, and Enrollments
         const formatted = await Promise.all(
           (classesData || []).map(async (item: any) => {
             const enriched: ClassRecord = {
@@ -108,7 +104,6 @@ export default function ManageClasses() {
               enrolled_count: 0
             };
 
-            // A. Get Level from course_modules (Courses table doesn't have level)
             const { data: levelData } = await supabase
               .from('course_modules')
               .select('level')
@@ -117,7 +112,6 @@ export default function ManageClasses() {
               .single();
             if (levelData) enriched.level = levelData.level || 'N/A';
 
-            // B. Get Start/End dates from class_options (not classes table)
             const { data: optionsData } = await supabase
               .from('class_options')
               .select('start_time')
@@ -131,7 +125,6 @@ export default function ManageClasses() {
               enriched.end_date = last.start_time ? format(parseISO(last.start_time), 'MMM d, yyyy') : 'N/A';
             }
 
-            // C. Get Enrolled Count from class_enrollments
             const { count } = await supabase
               .from('class_enrollments')
               .select('*', { count: 'exact', head: true })
@@ -139,7 +132,6 @@ export default function ManageClasses() {
               .eq('status', 'active');
 
             enriched.enrolled_count = count || 0;
-
             return enriched;
           })
         );
@@ -181,7 +173,6 @@ export default function ManageClasses() {
     if (!confirm('Are you sure you want to permanently delete this class and ALL its bookings?')) return;
 
     try {
-      // 1. First, delete all bookings linked to this class_id
       const { error: bookingError } = await supabase
         .from('bookings')
         .delete()
@@ -192,7 +183,6 @@ export default function ManageClasses() {
         return;
       }
 
-      // 2. Now safely delete the class
       const { error: classError } = await supabase
         .from('classes')
         .delete()
@@ -204,7 +194,7 @@ export default function ManageClasses() {
       }
 
       alert('✅ Class and its bookings deleted successfully!');
-      loadData(); // Refresh the page
+      loadData();
     } catch (error: any) {
       alert('Error deleting class: ' + error.message);
     }
@@ -273,19 +263,18 @@ export default function ManageClasses() {
                   <tr><td colSpan={10} className="px-6 py-10 text-center text-gray-500 text-sm">No classes created yet.</td></tr>
                 ) : (
                   classes.map((c) => {
-                    // Calculate Enrollment %
                     const max = c.max_students || 1;
                     const enrolled = c.enrolled_count || 0;
                     const percentage = Math.min(100, Math.round((enrolled / max) * 100));
 
                     return (
                       <tr key={c.id} className="hover:bg-gray-50/80 transition-colors">
-                        {/* ✅ CODE COLUMN */}
                         <td className="px-4 py-4 whitespace-nowrap font-mono text-xs font-bold text-gray-600">
                           {c.class_code || 'N/A'}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
-                          <Link href={`/dashboard/classes/details/${c.id}`} className="hover:text-blue-600 hover:underline">
+                          {/* ✅ FIXED: Pointing to the new 'details' folder */}
+                          <Link href={`/dashboard/classes/details/${c.id}`} prefetch={true} className="hover:text-blue-600 hover:underline">
                             {c.course?.name || 'N/A'}
                           </Link>
                         </td>
@@ -308,10 +297,7 @@ export default function ManageClasses() {
                           <div className="flex flex-col items-center">
                             <span className="font-medium text-gray-800">{enrolled}</span>
                             <div className="w-16 h-1.5 bg-gray-200 rounded-full mt-1">
-                              <div 
-                                className="h-1.5 bg-blue-600 rounded-full transition-all duration-300"
-                                style={{ width: `${percentage}%` }}
-                              />
+                              <div className="h-1.5 bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${percentage}%` }} />
                             </div>
                             <span className="text-[10px] text-gray-400">{percentage}%</span>
                           </div>
@@ -323,7 +309,8 @@ export default function ManageClasses() {
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-right text-sm">
                           <div className="flex justify-end gap-2">
-                            <Link href={`/dashboard/classes/details/${c.id}`}>
+                            {/* ✅ FIXED: Pointing to the new 'details' folder */}
+                            <Link href={`/dashboard/classes/details/${c.id}`} prefetch={true}>
                               <button className="text-blue-600 hover:text-blue-800 hover:underline">View</button>
                             </Link>
                             <button onClick={() => deleteClass(c.id)} className="text-red-600 hover:text-red-800 hover:underline">Delete</button>
@@ -338,7 +325,6 @@ export default function ManageClasses() {
           </div>
         </div>
 
-        {/* Bookings Manager View */}
         {showBookingsManager && (
           <div className="bg-white rounded-lg shadow-lg overflow-hidden mb-6 border border-gray-200">
             <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
@@ -369,18 +355,7 @@ export default function ManageClasses() {
                         <td className="px-4 py-3">{format(parseISO(b.start_time), 'MMM d, h:mm a')}</td>
                         <td className="px-4 py-3">{format(parseISO(b.end_time), 'h:mm a')}</td>
                         <td className="px-4 py-3 flex justify-center gap-2">
-                          <button 
-                            onClick={async () => {
-                              if(confirm('Delete this booking?')) {
-                                await supabase.from('bookings').delete().eq('id', b.id);
-                                loadBookings();
-                              }
-                            }}
-                            className="p-1 text-red-600 hover:bg-red-50 rounded transition"
-                            title="Delete"
-                          >
-                            🗑️
-                          </button>
+                          <button onClick={async () => { if(confirm('Delete this booking?')) { await supabase.from('bookings').delete().eq('id', b.id); loadBookings(); } }} className="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
                         </td>
                       </tr>
                     ))
