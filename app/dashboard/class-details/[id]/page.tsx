@@ -9,7 +9,8 @@ export async function generateStaticParams() {
 
   if (!classes) return [];
 
-  return classes.map((cls) => ({
+  // ✅ Strictly typed for Vercel's TS compiler
+  return classes.map((cls: { id: string }) => ({
     id: cls.id,
   }));
 }
