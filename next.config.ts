@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // cacheComponents: true,
-  // Clean and safe config for Next.js 16
-  turbopack: {}, // Required to silence the Webpack/Turbopack warning
+  turbopack: {},
+  // This forces Next.js to ALWAYS server-render dynamic pages
+  // It fixes the 404/redirect issue for /courses/[id], /students/[id], etc.
+  output: 'standalone', 
 };
 
 export default nextConfig;
