@@ -273,7 +273,6 @@ export default function ManageClasses() {
                           {c.class_code || 'N/A'}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
-                          {/* ✅ FIXED: Pointing to the new 'details' folder */}
                           <Link href={`/dashboard/classes/details/${c.id}`} prefetch={true} className="hover:text-blue-600 hover:underline">
                             {c.course?.name || 'N/A'}
                           </Link>
@@ -309,9 +308,14 @@ export default function ManageClasses() {
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-right text-sm">
                           <div className="flex justify-end gap-2">
-                            {/* ✅ FIXED: Pointing to the new 'details' folder */}
+                            {/* ✅ Line 307: Updated with onClick safety push */}
                             <Link href={`/dashboard/classes/details/${c.id}`} prefetch={true}>
-                              <button className="text-blue-600 hover:text-blue-800 hover:underline">View</button>
+                              <button 
+                                className="text-blue-600 hover:text-blue-800 hover:underline"
+                                onClick={() => router.push(`/dashboard/classes/details/${c.id}`)}
+                              >
+                                View
+                              </button>
                             </Link>
                             <button onClick={() => deleteClass(c.id)} className="text-red-600 hover:text-red-800 hover:underline">Delete</button>
                           </div>
