@@ -2,18 +2,8 @@ import { createClient } from '@/lib/supabaseServer';
 import { notFound } from 'next/navigation';
 import ClassDetailsClient from './ClassDetailsClient';
 
-// 🔥 FORCE VERCEL TO GENERATE ROUTES FOR ALL EXISTING CLASSES
-export async function generateStaticParams() {
-  const supabase = (await createClient()) as any;
-  const { data: classes } = await supabase.from('classes').select('id');
-
-  if (!classes) return [];
-
-  // ✅ Strictly typed for Vercel's TS compiler
-  return classes.map((cls: { id: string }) => ({
-    id: cls.id,
-  }));
-}
+// ✅ Next.js config to prevent static generation at build time
+export const dynamic = 'force-dynamic';
 
 export default async function ClassDetailsPage({ params }: { params: { id: string } }) {
   // ✅ FIX: Cast the awaited client so TypeScript knows it's not a Promise
