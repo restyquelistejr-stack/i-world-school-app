@@ -2,6 +2,18 @@ import { createClient } from '@/lib/supabaseServer';
 import { notFound } from 'next/navigation';
 import ClassDetailsClient from './ClassDetailsClient';
 
+// 🔥 FORCE VERCEL TO GENERATE ROUTES FOR ALL EXISTING CLASSES
+export async function generateStaticParams() {
+  const supabase = createClient();
+  const { data: classes } = await supabase.from('classes').select('id');
+
+  if (!classes) return [];
+
+  return classes.map((cls) => ({
+    id: cls.id,
+  }));
+}
+
 export default async function ClassDetailsPage({ params }: { params: { id: string } }) {
   // ✅ FIX: Cast the awaited client so TypeScript knows it's not a Promise
   const supabase = (await createClient()) as any;
