@@ -4,7 +4,7 @@ import ClassDetailsClient from './ClassDetailsClient';
 
 // 🔥 FORCE VERCEL TO GENERATE ROUTES FOR ALL EXISTING CLASSES
 export async function generateStaticParams() {
-  const supabase = createClient();
+  const supabase = (await createClient()) as any;
   const { data: classes } = await supabase.from('classes').select('id');
 
   if (!classes) return [];
