@@ -2,11 +2,9 @@ import { createClient } from '@/lib/supabaseServer';
 import { notFound } from 'next/navigation';
 import ClassDetailsClient from './ClassDetailsClient';
 
-// This forces Vercel to NEVER cache this page
-export const dynamic = 'force-dynamic';
-
 export default async function ClassDetailsPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+  // ✅ FIX: Cast the awaited client so TypeScript knows it's not a Promise
+  const supabase = (await createClient()) as any;
   
   // Fetch the class data on the server
   const { data: classData, error } = await supabase
