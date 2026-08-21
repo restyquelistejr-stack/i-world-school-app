@@ -2,10 +2,10 @@ import { createClient } from '@/lib/supabaseServer';
 import { notFound } from 'next/navigation';
 import ClassDetailsClient from './ClassDetailsClient';
 
-// ✅ Next.js config to prevent static generation at build time
-export const dynamic = 'force-dynamic';
-
-export default async function ClassDetailsPage({ params }: { params: { id: string } }) {
+export default async function ClassDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  // ✅ Next.js 15 requires params to be awaited
+  const { id } = await params;
+  
   // ✅ FIX: Cast the awaited client so TypeScript knows it's not a Promise
   const supabase = (await createClient()) as any;
   
@@ -18,7 +18,7 @@ export default async function ClassDetailsPage({ params }: { params: { id: strin
       room:room_id (id, name),
       course:course_id (id, name)
     `)
-    .eq('id', params.id)
+    .eq('id', id)
     .single();
 
   if (error || !classData) {
@@ -26,5 +26,5 @@ export default async function ClassDetailsPage({ params }: { params: { id: strin
   }
 
   // Pass the data down to the Client Component
-  return <ClassDetailsClient initialClassData={classData} classId={params.id} />;
+  return <ClassDetailsClient initialClassData={classData} classId={id} />;
 }
