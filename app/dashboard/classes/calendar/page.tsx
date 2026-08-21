@@ -26,6 +26,7 @@ interface Booking {
   end_time: string;
   status: string;
   class_code?: string;
+  class_id?: string;
   teacher: {
     id: string;
     full_name: string;
@@ -73,7 +74,7 @@ export default function ClassCalendarPage() {
   const weekDaysArray = Array.from({ length: 7 }, (_, i) => addDays(weekDays, i));
 
   // ==========================================
-  // LOAD DATA FUNCTION (FULLY RELIABLE)
+  // LOAD DATA FUNCTION (FIXED - NO class_id JOIN)
   // ==========================================
   async function loadData() {
     setLoading(true);
@@ -104,7 +105,7 @@ export default function ClassCalendarPage() {
       if (roomsError) throw new Error(`Rooms Error: ${roomsError.message}`);
       setRooms(roomsData || []);
 
-      // 2. Fetch Bookings
+      // 2. Fetch Bookings - WITHOUT the class_id join (causing the error)
       const { data: bookingsData, error: bookingsError } = await supabase
         .from('bookings')
         .select(`
@@ -127,38 +128,61 @@ export default function ClassCalendarPage() {
 
       if (teacherError) throw new Error(`Teachers Error: ${teacherError.message}`);
 
-      // 4. Enrich the bookings
-      const formattedBookings = (bookingsData || []).map((booking: any) => ({
-        ...booking,
-        teacher: allTeachersData?.find(t => t.id === booking.teacher_id) || null,
-        class_code: 'N/A'
-      }));
+      // 4. Enrich the bookings with teacher data
+      const formattedBookings = (bookingsData || []).map((booking: any) => {
+        const teacher = allTeachersData?.find(t => t.id === booking.teacher_id) || null;
+        return {
+          ...booking,
+          teacher: teacher,
+          class_code: 'N/A' // Will try to fetch class codes separately
+        };
+      });
 
-      // 5. Fetch class codes
-      const classCodeMap: Record<string, string> = {};
-      for (let i = 0; i < formattedBookings.length; i++) {
-        const b = formattedBookings[i];
-        if (b.class_code && b.class_code !== 'N/A') continue;
-
-        const { data: optData } = await supabase
+      // 5. Fetch class codes from class_options for these bookings
+      if (formattedBookings.length > 0) {
+        // Get all distinct start_times to find matching class_options
+        const startTimes = [...new Set(formattedBookings.map(b => b.start_time))];
+        
+        const { data: classOptionsData, error: classOptError } = await supabase
           .from('class_options')
-          .select('class_id')
-          .eq('start_time', b.start_time)
-          .limit(1)
-          .single();
+          .select('start_time, class_id')
+          .in('start_time', startTimes);
 
-        if (optData && optData.class_id) {
-          if (!classCodeMap[optData.class_id]) {
-            const { data: classData } = await supabase
+        if (!classOptError && classOptionsData) {
+          // Create a map of start_time -> class_id
+          const classIdMap: Record<string, string> = {};
+          classOptionsData.forEach(co => {
+            if (co.start_time && co.class_id) {
+              classIdMap[co.start_time] = co.class_id;
+            }
+          });
+
+          // Get all unique class_ids
+          const classIds = [...new Set(Object.values(classIdMap).filter(id => id))];
+          
+          if (classIds.length > 0) {
+            // Fetch class codes
+            const { data: classesData, error: classesError } = await supabase
               .from('classes')
-              .select('class_code')
-              .eq('id', optData.class_id)
-              .single();
-            if (classData) {
-              classCodeMap[optData.class_id] = classData.class_code || 'N/A';
+              .select('id, class_code')
+              .in('id', classIds);
+
+            if (!classesError && classesData) {
+              const classCodeMap: Record<string, string> = {};
+              classesData.forEach(c => {
+                classCodeMap[c.id] = c.class_code || 'N/A';
+              });
+
+              // Update each booking with its class_code
+              formattedBookings.forEach(b => {
+                const classId = classIdMap[b.start_time];
+                if (classId && classCodeMap[classId]) {
+                  b.class_code = classCodeMap[classId];
+                  b.class_id = classId;
+                }
+              });
             }
           }
-          b.class_code = classCodeMap[optData.class_id] || 'N/A';
         }
       }
 
@@ -185,41 +209,6 @@ export default function ClassCalendarPage() {
     loadData();
     if (showManageView) loadAllTeachers();
   }, [selectedDate, viewMode, showManageView]);
-
-  // ==========================================
-  // TEST DATA FUNCTION
-  // ==========================================
-  const addTestBooking = async () => {
-    if (rooms.length === 0) {
-      alert("Please ensure you have at least 1 Room added to your database!");
-      return;
-    }
-
-    const randomRoom = rooms[Math.floor(Math.random() * rooms.length)];
-    const now = new Date();
-    now.setHours(10, 0, 0, 0);
-    
-    const { data: teachers } = await supabase.from('users').select('id, full_name').eq('role', 'teacher').limit(1);
-    const teacher = teachers && teachers.length > 0 ? teachers[0] : { id: null, full_name: 'Test Teacher' };
-
-    const testBooking = {
-      room_id: randomRoom.id,
-      teacher_id: teacher.id,
-      course_id: null,
-      student_id: null,
-      start_time: now.toISOString(),
-      end_time: addHours(now, 1).toISOString(),
-      status: 'confirmed'
-    };
-
-    const { error } = await supabase.from('bookings').insert([testBooking]);
-    if (error) {
-      alert(`Failed to add test booking: ${error.message}`);
-    } else {
-      alert(`✅ Test booking added for ${randomRoom.name} at 10 AM today! Reloading...`);
-      loadData();
-    }
-  };
 
   // ==========================================
   // HELPERS
@@ -316,6 +305,14 @@ export default function ClassCalendarPage() {
   // RENDER: CALENDAR VIEWS
   // ==========================================
   const renderWeekView = () => {
+    if (rooms.length === 0) {
+      return (
+        <div className="p-8 text-center text-gray-500">
+          <p>No rooms available. Please add rooms to see the calendar.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="overflow-x-auto">
         <div className="min-w-[1200px]">
@@ -331,57 +328,69 @@ export default function ClassCalendarPage() {
             ))}
           </div>
 
-          {rooms.map((room) => (
-            <div key={room.id} className="grid border-b hover:bg-gray-50/30" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
-              <div className="p-3 bg-gray-50 sticky left-0 border-r flex flex-col justify-center min-h-[120px]">
-                <div className="font-medium text-gray-800 text-sm">{room.name}</div>
-                <div className="text-xs text-gray-500">Cap: {room.capacity}</div>
+          {rooms.map((room) => {
+            const roomBookings = bookings.filter(b => b.room_id === room.id);
+            
+            return (
+              <div key={room.id} className="grid border-b hover:bg-gray-50/30" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
+                <div className="p-3 bg-gray-50 sticky left-0 border-r flex flex-col justify-center min-h-[120px]">
+                  <div className="font-medium text-gray-800 text-sm">{room.name}</div>
+                  <div className="text-xs text-gray-500">Cap: {room.capacity}</div>
+                </div>
+                {weekDaysArray.map((day, dayIndex) => {
+                  const dayBookings = roomBookings.filter(
+                    (b) => isSameDay(new Date(b.start_time), day)
+                  );
+                  return (
+                    <div key={dayIndex} className="p-2 border-r min-h-[120px] flex flex-col gap-1 relative">
+                      {dayBookings.length === 0 ? (
+                        <div className="absolute inset-0 flex items-center justify-center text-[10px] text-green-600 font-medium bg-green-50/50 m-2 rounded">
+                          Available
+                        </div>
+                      ) : (
+                        dayBookings.map((booking) => (
+                          <button
+                            key={booking.id}
+                            onClick={() => setSelectedBooking(booking)}
+                            className={`flex-1 w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center min-h-[50px]`}
+                          >
+                            <div className="font-bold text-[11px] leading-tight line-clamp-2 mb-0.5">
+                              {booking.course?.name || 'Class'}
+                            </div>
+                            <div className="flex justify-between items-center text-[9px] text-gray-600">
+                              <span className="truncate max-w-[80px]">
+                                {booking.teacher?.full_name || 'Unknown'}
+                              </span>
+                              <span className="bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
+                                {booking.class_code || 'N/A'}
+                              </span>
+                            </div>
+                            <div className="text-[8px] text-gray-400 mt-0.5">
+                              {format(parseISO(booking.start_time), 'h:mm a')}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              {weekDaysArray.map((day, dayIndex) => {
-                const dayBookings = bookings.filter(
-                  (b) => b.room_id === room.id && isSameDay(new Date(b.start_time), day)
-                );
-                return (
-                  <div key={dayIndex} className="p-2 border-r min-h-[120px] flex flex-col gap-1 relative">
-                    {dayBookings.length === 0 ? (
-                      <div className="absolute inset-0 flex items-center justify-center text-[10px] text-green-600 font-medium bg-green-50/50 m-2 rounded">
-                        Available
-                      </div>
-                    ) : (
-                      dayBookings.map((booking) => (
-                        <button
-                          key={booking.id}
-                          onClick={() => setSelectedBooking(booking)}
-                          className={`flex-1 w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center min-h-[50px]`}
-                        >
-                          <div className="font-bold text-[11px] leading-tight line-clamp-2 mb-0.5">
-                            {booking.course?.name || 'Class'}
-                          </div>
-                          <div className="flex justify-between items-center text-[9px] text-gray-600">
-                            <span className="truncate max-w-[80px]">
-                              {booking.teacher?.full_name || ''}
-                            </span>
-                            <span className="bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
-                              {booking.class_code || 'N/A'}
-                            </span>
-                          </div>
-                          <div className="text-[8px] text-gray-400 mt-0.5">
-                            {format(parseISO(booking.start_time), 'h:mm a')}
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );
   };
 
   const renderDayView = () => {
+    if (rooms.length === 0) {
+      return (
+        <div className="p-8 text-center text-gray-500">
+          <p>No rooms available. Please add rooms to see the calendar.</p>
+        </div>
+      );
+    }
+
     const hours = Array.from({ length: 14 }, (_, i) => i + 8);
     return (
       <div className="overflow-x-auto">
@@ -526,7 +535,6 @@ export default function ClassCalendarPage() {
         </div>
 
         {/* Right side: Navigation Controls */}
-        {/* Layout: [Today] [<- Date Range ->] [Day] [Week] | [Teachers] */}
         <div className="flex flex-wrap items-center gap-2">
           
           <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 shadow-sm">
@@ -626,16 +634,19 @@ export default function ClassCalendarPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Change Teacher</label>
-                <select value={editingBooking.teacher_id || ''} onChange={(e) => setEditingBooking({...editingBooking, teacher_id: e.target.value})} className="w-full border rounded-lg p-2 text-sm"><option value="">Unassigned</option>{allTeachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}</select>
+                <select value={editingBooking.teacher_id || ''} onChange={(e) => setEditingBooking({...editingBooking, teacher_id: e.target.value})} className="w-full border rounded-lg p-2 text-sm">
+                  <option value="">Unassigned</option>
+                  {allTeachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">New Start</label>
-                  <input type="datetime-local" value={formatISO(parseISO(editingBooking.start_time), { representation: 'date' })} onChange={(e) => setEditingBooking({...editingBooking, start_time: new Date(e.target.value).toISOString()})} className="w-full border rounded-lg p-2 text-sm" />
+                  <input type="datetime-local" value={formatISO(parseISO(editingBooking.start_time), { representation: 'complete' }).slice(0, 16)} onChange={(e) => setEditingBooking({...editingBooking, start_time: new Date(e.target.value).toISOString()})} className="w-full border rounded-lg p-2 text-sm" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">New End</label>
-                  <input type="datetime-local" value={formatISO(parseISO(editingBooking.end_time), { representation: 'date' })} onChange={(e) => setEditingBooking({...editingBooking, end_time: new Date(e.target.value).toISOString()})} className="w-full border rounded-lg p-2 text-sm" />
+                  <input type="datetime-local" value={formatISO(parseISO(editingBooking.end_time), { representation: 'complete' }).slice(0, 16)} onChange={(e) => setEditingBooking({...editingBooking, end_time: new Date(e.target.value).toISOString()})} className="w-full border rounded-lg p-2 text-sm" />
                 </div>
               </div>
             </div>

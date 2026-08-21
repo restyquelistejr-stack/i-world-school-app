@@ -102,7 +102,15 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
         supabase.from('course_modules').select('level').eq('course_id', c.course_id).limit(1).single(),
         c.teacher_id ? supabase.from('users').select('full_name').eq('id', c.teacher_id).single() : Promise.resolve({ data: null }),
         c.room_id ? supabase.from('rooms').select('name').eq('id', c.room_id).single() : Promise.resolve({ data: null }),
-        supabase.from('class_options').select('*').eq('class_id', classId).order('session_index'),
+        // Updated query to include room and teacher names
+        supabase.from('class_options')
+          .select(`
+            *,
+            rooms:room_id (name),
+            users:teacher_id (full_name)
+          `)
+          .eq('class_id', classId)
+          .order('session_index'),
         supabase.from('inquiry_availability').select('*').eq('class_id', classId),
         supabase.from('class_enrollments').select('id, student_id, student:student_id(id, full_name, email)').eq('class_id', classId).eq('status', 'active')
       ]);
@@ -111,7 +119,17 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
       if (modulesRes.data) setCourseLevel(modulesRes.data.level || 'N/A');
       if (teacherRes.data) setTeacherName(teacherRes.data.full_name);
       if (roomRes.data) setRoomName(roomRes.data.name);
-      if (scheduleRes.data) setLockedSchedules(scheduleRes.data || []);
+      
+      if (scheduleRes.data) {
+        // Map the room and teacher names to each schedule item
+        const scheduleWithDetails = scheduleRes.data.map(item => ({
+          ...item,
+          room_name: item.rooms?.name || roomRes.data?.name || 'Not Assigned',
+          teacher_name: item.users?.full_name || teacherRes.data?.full_name || 'Not Assigned'
+        }));
+        setLockedSchedules(scheduleWithDetails);
+      }
+      
       if (inquiryRes.data) setInquiryPreferences(inquiryRes.data || []);
       if (studentRes.data) setEnrolledStudents(studentRes.data);
 
@@ -684,14 +702,35 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
         {lockedSchedules.length > 0 && (
           <div className="border-t pt-4">
             <h3 className="font-semibold text-gray-700 mb-2">📅 Proposed Schedule</h3>
-            <div className="grid grid-cols-1 gap-2 text-sm">
-              {lockedSchedules.map((s, idx) => (
-                <div key={idx} className="p-2 bg-blue-50 rounded border border-blue-100 text-blue-800 flex justify-between items-center">
-                  <span className="font-medium">Session {idx + 1}:</span> 
-                  <span>{new Date(s.start_time).toLocaleString()} - {new Date(s.end_time).toLocaleString()}</span>
-                  <span className="px-2 py-1 bg-white rounded border border-blue-200 text-xs">{s.room_name || 'Room'}</span>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Session</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Room</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teacher</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {lockedSchedules.map((s, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-sm font-medium text-gray-900">Session {idx + 1}</td>
+                      <td className="px-4 py-2 text-sm text-gray-600">
+                        {new Date(s.start_time).toLocaleString()} - {new Date(s.end_time).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                          {s.room_name || roomName || 'Not Assigned'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-sm text-gray-600">
+                        {s.teacher_name || teacherName || 'Not Assigned'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
