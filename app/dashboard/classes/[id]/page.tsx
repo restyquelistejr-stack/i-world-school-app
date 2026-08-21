@@ -2,6 +2,19 @@ import { createClient } from '@/lib/supabaseServer';
 import { notFound } from 'next/navigation';
 import ClassDetailsClient from './ClassDetailsClient';
 
+// ✅ THIS IS THE MAGIC FIX
+// It forces Next.js to generate routes for ALL existing classes.
+export async function generateStaticParams() {
+  const supabase = (await createClient()) as any;
+  const { data: classes } = await supabase.from('classes').select('id');
+
+  if (!classes) return [];
+
+  return classes.map((cls: { id: string }) => ({
+    id: cls.id,
+  }));
+}
+
 export default async function ClassDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   // ✅ Next.js 15 requires params to be awaited
   const { id } = await params;
