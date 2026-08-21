@@ -131,12 +131,14 @@ export default function CoursesPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Link href={`/dashboard/academics/courses/${course.id}`}>
+                  {/* ✅ FIXED: Updated View link */}
+                  <Link href={`/dashboard/academics/courses/details?id=${course.id}`}>
                     <button className="px-3 py-1.5 text-xs font-medium bg-white rounded border border-gray-300 text-gray-700 hover:bg-gray-50 transition">
                       View
                     </button>
                   </Link>
-                  <Link href={`/dashboard/academics/courses/${course.id}/edit`}>
+                  {/* ✅ FIXED: Updated Edit link */}
+                  <Link href={`/dashboard/academics/courses/edit?id=${course.id}`}>
                     <button className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition">
                       Edit
                     </button>

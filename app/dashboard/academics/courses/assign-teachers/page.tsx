@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 interface Teacher {
@@ -21,9 +21,9 @@ interface AssignedTeacher {
 }
 
 export default function AssignTeachersPage() {
-  const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const courseId = params.id as string;
+  const courseId = searchParams.get('id') as string;
 
   const [courseName, setCourseName] = useState('');
   const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
@@ -54,10 +54,11 @@ export default function AssignTeachersPage() {
         setCourseName(course.name);
       }
 
-      // Get all active teachers
+      // Get all active teachers from users table (not teachers table)
       const { data: teachers, error: teachersError } = await supabase
-        .from('teachers')
-        .select('id, full_name, email, specialization, is_active')
+        .from('users')
+        .select('id, full_name, email')
+        .eq('role', 'teacher')
         .eq('is_active', true)
         .order('full_name');
 
@@ -67,17 +68,16 @@ export default function AssignTeachersPage() {
         setAllTeachers(teachers);
       }
 
-      // Get assigned teachers for this course
+      // Get assigned teachers for this course from staff_courses table
       const { data: assignments, error: assignmentsError } = await supabase
-        .from('teacher_course_assignments')
+        .from('staff_courses')
         .select(`
           id,
           teacher_id,
           course_id,
-          teacher:teachers!inner(id, full_name, email, specialization)
+          teacher:users!teacher_id(id, full_name, email)
         `)
-        .eq('course_id', courseId)
-        .eq('is_active', true);
+        .eq('course_id', courseId);
 
       if (assignmentsError) {
         console.error('Error loading assignments:', assignmentsError);
@@ -88,10 +88,10 @@ export default function AssignTeachersPage() {
           teacher_id: item.teacher_id,
           course_id: item.course_id,
           teacher: {
-            id: item.teacher.id,
-            full_name: item.teacher.full_name,
-            email: item.teacher.email,
-            specialization: item.teacher.specialization,
+            id: item.teacher?.id || item.teacher_id,
+            full_name: item.teacher?.full_name || 'Unknown',
+            email: item.teacher?.email || '',
+            specialization: null,
             is_active: true,
           }
         }));
@@ -118,11 +118,10 @@ export default function AssignTeachersPage() {
     setSaving(true);
     try {
       const { error } = await supabase
-        .from('teacher_course_assignments')
+        .from('staff_courses')
         .insert({
           teacher_id: selectedTeacherId,
           course_id: courseId,
-          is_active: true,
         });
 
       if (error) {
@@ -145,12 +144,12 @@ export default function AssignTeachersPage() {
 
     try {
       const { error } = await supabase
-        .from('teacher_course_assignments')
-        .update({ is_active: false })
+        .from('staff_courses')
+        .delete()
         .eq('id', assignmentId);
 
       if (error) {
-        console.error('Update error:', error);
+        console.error('Delete error:', error);
         throw error;
       }
 
@@ -173,10 +172,24 @@ export default function AssignTeachersPage() {
     );
   }
 
+  if (!courseId) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center text-yellow-800">
+          <h2 className="text-xl font-bold mb-2">No Course Selected</h2>
+          <p>Please select a course to assign teachers.</p>
+          <Link href="/dashboard/academics/courses" className="text-blue-600 hover:underline mt-4 inline-block">
+            ← Back to Courses
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center gap-4 mb-6">
-        <Link href={`/dashboard/academics/courses/${courseId}/edit`}>
+        <Link href={`/dashboard/academics/courses/details?id=${courseId}`}>
           <button className="text-gray-600 hover:text-gray-900">← Back to Course</button>
         </Link>
         <h1 className="text-2xl font-bold text-gray-900">
@@ -197,7 +210,7 @@ export default function AssignTeachersPage() {
               <option value="">Select a teacher...</option>
               {availableTeachers.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
-                  {teacher.full_name} {teacher.specialization ? `- ${teacher.specialization}` : ''}
+                  {teacher.full_name} {teacher.email ? `- ${teacher.email}` : ''}
                 </option>
               ))}
             </select>
@@ -241,11 +254,6 @@ export default function AssignTeachersPage() {
                     </p>
                     <p className="text-sm text-gray-500">
                       {assignment.teacher.email}
-                      {assignment.teacher.specialization && (
-                        <span className="ml-2 inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
-                          {assignment.teacher.specialization}
-                        </span>
-                      )}
                     </p>
                   </div>
                   <button

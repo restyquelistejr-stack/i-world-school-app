@@ -105,7 +105,7 @@ export default function ClassCalendarPage() {
       if (roomsError) throw new Error(`Rooms Error: ${roomsError.message}`);
       setRooms(roomsData || []);
 
-      // 2. Fetch Bookings - WITHOUT the class_id join (causing the error)
+      // 2. Fetch Bookings - WITHOUT the class_id join
       const { data: bookingsData, error: bookingsError } = await supabase
         .from('bookings')
         .select(`
@@ -134,13 +134,12 @@ export default function ClassCalendarPage() {
         return {
           ...booking,
           teacher: teacher,
-          class_code: 'N/A' // Will try to fetch class codes separately
+          class_code: 'N/A'
         };
       });
 
       // 5. Fetch class codes from class_options for these bookings
       if (formattedBookings.length > 0) {
-        // Get all distinct start_times to find matching class_options
         const startTimes = [...new Set(formattedBookings.map(b => b.start_time))];
         
         const { data: classOptionsData, error: classOptError } = await supabase
@@ -149,7 +148,6 @@ export default function ClassCalendarPage() {
           .in('start_time', startTimes);
 
         if (!classOptError && classOptionsData) {
-          // Create a map of start_time -> class_id
           const classIdMap: Record<string, string> = {};
           classOptionsData.forEach(co => {
             if (co.start_time && co.class_id) {
@@ -157,11 +155,9 @@ export default function ClassCalendarPage() {
             }
           });
 
-          // Get all unique class_ids
           const classIds = [...new Set(Object.values(classIdMap).filter(id => id))];
           
           if (classIds.length > 0) {
-            // Fetch class codes
             const { data: classesData, error: classesError } = await supabase
               .from('classes')
               .select('id, class_code')
@@ -173,7 +169,6 @@ export default function ClassCalendarPage() {
                 classCodeMap[c.id] = c.class_code || 'N/A';
               });
 
-              // Update each booking with its class_code
               formattedBookings.forEach(b => {
                 const classId = classIdMap[b.start_time];
                 if (classId && classCodeMap[classId]) {
@@ -185,6 +180,11 @@ export default function ClassCalendarPage() {
           }
         }
       }
+
+      // Sort bookings by start_time (earliest first)
+      formattedBookings.sort((a, b) => {
+        return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+      });
 
       setBookings(formattedBookings || []);
       setDebugInfo(`✅ Found ${formattedBookings?.length || 0} bookings`);
@@ -314,10 +314,13 @@ export default function ClassCalendarPage() {
     }
 
     return (
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto relative" style={{ maxHeight: 'calc(100vh - 250px)' }}>
         <div className="min-w-[1200px]">
-          <div className="grid border-b bg-gray-50" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
-            <div className="p-3 bg-gray-50 font-medium text-gray-600 sticky left-0 border-r">Room</div>
+          {/* Sticky Header */}
+          <div className="grid border-b bg-gray-50 sticky top-0 z-20" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
+            <div className="p-3 bg-gray-50 font-medium text-gray-600 sticky left-0 z-30 border-r">
+              Room
+            </div>
             {weekDaysArray.map((day, i) => (
               <div key={i} className={`p-3 text-center ${isToday(day) ? 'bg-blue-50' : 'bg-gray-50'}`}>
                 <div className="font-medium">{format(day, 'EEE')}</div>
@@ -328,19 +331,27 @@ export default function ClassCalendarPage() {
             ))}
           </div>
 
+          {/* Rooms Rows */}
           {rooms.map((room) => {
             const roomBookings = bookings.filter(b => b.room_id === room.id);
             
             return (
               <div key={room.id} className="grid border-b hover:bg-gray-50/30" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
-                <div className="p-3 bg-gray-50 sticky left-0 border-r flex flex-col justify-center min-h-[120px]">
+                {/* Sticky Room Column */}
+                <div className="p-3 bg-gray-50 sticky left-0 z-10 border-r flex flex-col justify-center min-h-[120px] shadow-sm">
                   <div className="font-medium text-gray-800 text-sm">{room.name}</div>
                   <div className="text-xs text-gray-500">Cap: {room.capacity}</div>
                 </div>
+                
+                {/* Day Columns */}
                 {weekDaysArray.map((day, dayIndex) => {
-                  const dayBookings = roomBookings.filter(
-                    (b) => isSameDay(new Date(b.start_time), day)
-                  );
+                  // Filter and sort bookings for this day by time (earliest first)
+                  const dayBookings = roomBookings
+                    .filter((b) => isSameDay(new Date(b.start_time), day))
+                    .sort((a, b) => {
+                      return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+                    });
+                  
                   return (
                     <div key={dayIndex} className="p-2 border-r min-h-[120px] flex flex-col gap-1 relative">
                       {dayBookings.length === 0 ? (
@@ -348,17 +359,17 @@ export default function ClassCalendarPage() {
                           Available
                         </div>
                       ) : (
-                        dayBookings.map((booking) => (
+                        dayBookings.map((booking, bookingIndex) => (
                           <button
                             key={booking.id}
                             onClick={() => setSelectedBooking(booking)}
-                            className={`flex-1 w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center min-h-[50px]`}
+                            className={`w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center min-h-[45px]`}
                           >
                             <div className="font-bold text-[11px] leading-tight line-clamp-2 mb-0.5">
                               {booking.course?.name || 'Class'}
                             </div>
                             <div className="flex justify-between items-center text-[9px] text-gray-600">
-                              <span className="truncate max-w-[80px]">
+                              <span className="truncate max-w-[70px]">
                                 {booking.teacher?.full_name || 'Unknown'}
                               </span>
                               <span className="bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
@@ -368,6 +379,12 @@ export default function ClassCalendarPage() {
                             <div className="text-[8px] text-gray-400 mt-0.5">
                               {format(parseISO(booking.start_time), 'h:mm a')}
                             </div>
+                            {/* Small time indicator showing position in day */}
+                            {dayBookings.length > 1 && (
+                              <div className="absolute top-0 right-0 mt-0.5 mr-0.5 text-[6px] text-gray-400 bg-white/70 px-1 rounded">
+                                #{bookingIndex + 1}
+                              </div>
+                            )}
                           </button>
                         ))
                       )}
@@ -393,34 +410,44 @@ export default function ClassCalendarPage() {
 
     const hours = Array.from({ length: 14 }, (_, i) => i + 8);
     return (
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto relative" style={{ maxHeight: 'calc(100vh - 250px)' }}>
         <div className="min-w-[800px]">
-          <div className="grid border-b bg-gray-50" style={{ gridTemplateColumns: `80px repeat(${rooms.length || 1}, minmax(120px, 1fr))` }}>
-            <div className="p-3 font-medium text-gray-600 sticky left-0 border-r text-xs text-center">Time</div>
+          {/* Sticky Header */}
+          <div className="grid border-b bg-gray-50 sticky top-0 z-20" style={{ gridTemplateColumns: `80px repeat(${rooms.length || 1}, minmax(120px, 1fr))` }}>
+            <div className="p-3 font-medium text-gray-600 sticky left-0 z-30 border-r text-xs text-center bg-gray-50">
+              Time
+            </div>
             {rooms.map((room) => (
-              <div key={room.id} className="p-2 border-r text-center">
+              <div key={room.id} className="p-2 border-r text-center bg-gray-50">
                 <div className="font-medium text-xs text-gray-800">{room.name}</div>
                 <div className="text-[10px] text-gray-400">Cap: {room.capacity}</div>
               </div>
             ))}
           </div>
 
+          {/* Time Slots */}
           {hours.map((hour) => {
             const slotDate = new Date(selectedDate);
             slotDate.setHours(hour, 0, 0, 0);
             return (
               <div key={hour} className="grid border-b hover:bg-gray-50/30" style={{ gridTemplateColumns: `80px repeat(${rooms.length || 1}, minmax(120px, 1fr))` }}>
-                <div className="p-2 bg-gray-50 sticky left-0 border-r flex items-center justify-center text-xs font-mono text-gray-500">
+                {/* Sticky Time Column */}
+                <div className="p-2 bg-gray-50 sticky left-0 z-10 border-r flex items-center justify-center text-xs font-mono text-gray-500">
                   {format(slotDate, 'h:mm a')}
                 </div>
                 {rooms.map((room) => {
-                  const bookingsAtThisTime = bookings.filter(
-                    (b) => 
-                      b.room_id === room.id && 
-                      isSameDay(new Date(b.start_time), selectedDate) &&
-                      new Date(b.start_time).getHours() <= hour &&
-                      new Date(b.end_time).getHours() > hour
-                  );
+                  const bookingsAtThisTime = bookings
+                    .filter(
+                      (b) => 
+                        b.room_id === room.id && 
+                        isSameDay(new Date(b.start_time), selectedDate) &&
+                        new Date(b.start_time).getHours() <= hour &&
+                        new Date(b.end_time).getHours() > hour
+                    )
+                    .sort((a, b) => {
+                      return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+                    });
+                  
                   return (
                     <div key={room.id} className="p-1 border-r min-h-[60px] flex flex-col gap-1 justify-center">
                       {bookingsAtThisTime.length > 0 ? (

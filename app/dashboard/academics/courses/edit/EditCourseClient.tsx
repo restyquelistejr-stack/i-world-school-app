@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
@@ -64,19 +64,12 @@ interface Module {
   delivery_units: DeliveryUnit[];
 }
 
-export default function EditCoursePage({ params }: { params: Promise<{ id: string }> }) {
+export default function EditCourseClient({ courseId }: { courseId: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('details');
-
-  const unwrappedParams = use(params);
-  const courseIdRef = useRef<string | null>(null);
-  
-  if (unwrappedParams?.id) {
-    courseIdRef.current = unwrappedParams.id;
-  }
 
   const [formData, setFormData] = useState({
     name: '',
@@ -95,7 +88,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
     price_50plus_on_site: 22,
     price_50plus_online: 18,
     scheduling_preference: 'same_day',
-    link_url: '', // ✅ New URL Field
+    link_url: '',
     modules: [] as Module[]
   });
 
@@ -105,8 +98,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
   // FETCH EXISTING DATA ON LOAD
   // ==========================================================
   useEffect(() => {
-    const currentId = courseIdRef.current;
-    if (!currentId) return;
+    if (!courseId) return;
 
     async function loadCourse() {
       setInitialLoading(true);
@@ -115,7 +107,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
         const { data: course, error: courseError } = await supabase
           .from('courses')
           .select(`*, packages:course_packages (*)`)
-          .eq('id', currentId)
+          .eq('id', courseId)
           .single();
 
         if (courseError) throw new Error(`Course Error: ${courseError.message}`);
@@ -124,7 +116,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
         const { data: modulesData, error: modulesError } = await supabase
           .from('course_modules')
           .select(`*, delivery_units:course_delivery_units (*)`)
-          .eq('course_id', currentId)
+          .eq('course_id', courseId)
           .order('module_order', { ascending: true });
 
         if (modulesError) throw new Error(`Modules Error: ${modulesError.message}`);
@@ -146,7 +138,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
           price_50plus_on_site: course.price_50plus_on_site || 0,
           price_50plus_online: course.price_50plus_online || 0,
           scheduling_preference: course.scheduling_preference || 'same_day',
-          link_url: course.link_url || '', // ✅ Fetch URL
+          link_url: course.link_url || '',
           modules: modulesData || []
         });
 
@@ -159,7 +151,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
     }
 
     loadCourse();
-  }, []);
+  }, [courseId]);
 
   // ==========================================================
   // HELPER FUNCTIONS
@@ -288,8 +280,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
     e.preventDefault();
     setLoading(true);
 
-    const currentId = courseIdRef.current;
-    if (!currentId || currentId === 'undefined') {
+    if (!courseId || courseId === 'undefined') {
       setLoading(false);
       alert('Error: Course ID is missing.');
       return;
@@ -298,7 +289,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
     try {
       const payload = JSON.parse(JSON.stringify({ ...formData, packages }));
       
-      const response = await fetch(`/api/courses/${currentId}`, {
+      const response = await fetch(`/api/courses/${courseId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -307,7 +298,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
       const result = await response.json();
       if (!result.success) throw new Error(result.error);
       
-      router.push(`/dashboard/academics/courses/${currentId}`);
+      router.push(`/dashboard/academics/courses/details?id=${courseId}`);
     } catch (error: any) {
       alert('Error: ' + error.message);
     }
@@ -321,7 +312,7 @@ export default function EditCoursePage({ params }: { params: Promise<{ id: strin
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <Link href={`/dashboard/academics/courses/${courseIdRef.current}`} className="text-blue-600 hover:underline text-sm mb-1 inline-block">← Back to Course</Link>
+          <Link href={`/dashboard/academics/courses/details?id=${courseId}`} className="text-blue-600 hover:underline text-sm mb-1 inline-block">← Back to Course</Link>
           <h1 className="text-2xl font-bold text-gray-900">Edit Course</h1>
         </div>
         <button type="submit" form="editForm" disabled={loading} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition">{loading ? 'Saving...' : '💾 Save Changes'}</button>
