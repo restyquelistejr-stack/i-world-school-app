@@ -54,7 +54,7 @@ export default function AssignTeachersPage() {
         setCourseName(course.name);
       }
 
-      // Get all active teachers from users table (not teachers table)
+      // Get all active teachers from users table
       const { data: teachers, error: teachersError } = await supabase
         .from('users')
         .select('id, full_name, email')
@@ -65,7 +65,15 @@ export default function AssignTeachersPage() {
       if (teachersError) {
         console.error('Error loading teachers:', teachersError);
       } else if (teachers) {
-        setAllTeachers(teachers);
+        // Map to Teacher interface with default values
+        const mappedTeachers: Teacher[] = teachers.map((t: any) => ({
+          id: t.id,
+          full_name: t.full_name,
+          email: t.email || '',
+          specialization: null,
+          is_active: true,
+        }));
+        setAllTeachers(mappedTeachers);
       }
 
       // Get assigned teachers for this course from staff_courses table
@@ -131,7 +139,7 @@ export default function AssignTeachersPage() {
 
       alert('✅ Teacher assigned successfully!');
       setSelectedTeacherId('');
-      await loadData(); // Refresh
+      await loadData();
     } catch (error: any) {
       console.error('Error:', error);
       alert('Error: ' + (error.message || 'Failed to assign teacher'));
@@ -153,7 +161,7 @@ export default function AssignTeachersPage() {
         throw error;
       }
 
-      await loadData(); // Refresh
+      await loadData();
     } catch (error: any) {
       console.error('Error:', error);
       alert('Error: ' + (error.message || 'Failed to remove teacher'));
