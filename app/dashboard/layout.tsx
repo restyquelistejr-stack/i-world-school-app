@@ -44,8 +44,17 @@ const menuItems = [
       { title: 'Inquire Class', href: '/dashboard/classes/inquire' },
     ]
   },
-  { title: 'Reports', href: '/dashboard/reports', icon: '📊' },
-  { title: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
+  {
+  title: 'Room Booking',
+  //href: '/dashboard/room-booking',
+  icon: '📅',
+  children: [
+    { title: 'Book a Room', href: '/dashboard/room-booking' },
+    //{ title: 'Calendar View', href: '/dashboard/room-booking/calendar' },
+  ]
+  },
+  //{ title: 'Reports', href: '/dashboard/reports', icon: '📊' },
+  //{ title: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
   { title: 'My Profile', href: '/dashboard/profile', icon: '👤' },
 ];
 

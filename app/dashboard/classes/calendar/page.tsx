@@ -16,6 +16,7 @@ import {
 } from 'date-fns';
 import Link from 'next/link';
 
+// --- Interfaces ---
 interface Booking {
   id: string;
   room_id: string;
@@ -27,6 +28,7 @@ interface Booking {
   status: string;
   class_code?: string;
   class_id?: string;
+  booking_type?: 'class' | 'room_booking';
   teacher: {
     id: string;
     full_name: string;
@@ -39,6 +41,29 @@ interface Booking {
   student: {
     id: string;
     full_name: string;
+  } | null;
+}
+
+interface RoomBooking {
+  id: string;
+  room_id: string;
+  teacher_id: string;
+  title: string;
+  booking_type: 'trial_lesson' | 'event' | 'meeting' | 'activity';
+  start_time: string;
+  end_time: string;
+  status: string;
+  requestor_name: string;
+  student_count: number;
+  room: {
+    id: string;
+    name: string;
+    capacity: number;
+  } | null;
+  teacher: {
+    id: string;
+    full_name: string;
+    email: string;
   } | null;
 }
 
@@ -60,8 +85,9 @@ export default function ClassCalendarPage() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [roomBookings, setRoomBookings] = useState<RoomBooking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('week');
   const [debugInfo, setDebugInfo] = useState<string>('Loading data...');
   const [showManageView, setShowManageView] = useState(false);
@@ -74,7 +100,7 @@ export default function ClassCalendarPage() {
   const weekDaysArray = Array.from({ length: 7 }, (_, i) => addDays(weekDays, i));
 
   // ==========================================
-  // LOAD DATA FUNCTION (FIXED - NO class_id JOIN)
+  // LOAD DATA FUNCTION
   // ==========================================
   async function loadData() {
     setLoading(true);
@@ -105,7 +131,7 @@ export default function ClassCalendarPage() {
       if (roomsError) throw new Error(`Rooms Error: ${roomsError.message}`);
       setRooms(roomsData || []);
 
-      // 2. Fetch Bookings - WITHOUT the class_id join
+      // 2. Fetch Class Bookings
       const { data: bookingsData, error: bookingsError } = await supabase
         .from('bookings')
         .select(`
@@ -119,7 +145,24 @@ export default function ClassCalendarPage() {
 
       if (bookingsError) throw new Error(`Bookings Error: ${bookingsError.message}`);
 
-      // 3. Fetch ALL teachers separately
+      // 3. Fetch Room Bookings
+      const { data: roomBookingsData, error: roomBookingsError } = await supabase
+        .from('room_bookings')
+        .select(`
+          *,
+          room:room_id ( id, name, capacity ),
+          teacher:teacher_id ( id, full_name, email )
+        `)
+        .gte('start_time', startDate.toISOString())
+        .lte('start_time', endDate.toISOString())
+        .in('status', ['confirmed', 'pending']);
+
+      if (roomBookingsError) {
+        console.warn('Room Bookings Error:', roomBookingsError);
+      }
+      setRoomBookings(roomBookingsData || []);
+
+      // 4. Fetch ALL teachers separately
       const { data: allTeachersData, error: teacherError } = await supabase
         .from('users')
         .select('id, full_name, email')
@@ -128,17 +171,18 @@ export default function ClassCalendarPage() {
 
       if (teacherError) throw new Error(`Teachers Error: ${teacherError.message}`);
 
-      // 4. Enrich the bookings with teacher data
+      // 5. Enrich the bookings with teacher data
       const formattedBookings = (bookingsData || []).map((booking: any) => {
         const teacher = allTeachersData?.find(t => t.id === booking.teacher_id) || null;
         return {
           ...booking,
           teacher: teacher,
-          class_code: 'N/A'
+          class_code: 'N/A',
+          booking_type: 'class'
         };
       });
 
-      // 5. Fetch class codes from class_options for these bookings
+      // 6. Fetch class codes from class_options for these bookings
       if (formattedBookings.length > 0) {
         const startTimes = [...new Set(formattedBookings.map(b => b.start_time))];
         
@@ -181,13 +225,26 @@ export default function ClassCalendarPage() {
         }
       }
 
+      // 7. Enrich room bookings with teacher data
+      const formattedRoomBookings = (roomBookingsData || []).map((booking: any) => {
+        const teacher = allTeachersData?.find(t => t.id === booking.teacher_id) || null;
+        return {
+          ...booking,
+          teacher: teacher,
+          booking_type: 'room_booking'
+        };
+      });
+
       // Sort bookings by start_time (earliest first)
       formattedBookings.sort((a, b) => {
         return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
       });
 
       setBookings(formattedBookings || []);
-      setDebugInfo(`✅ Found ${formattedBookings?.length || 0} bookings`);
+      setRoomBookings(formattedRoomBookings || []);
+      
+      const totalBookings = (formattedBookings?.length || 0) + (formattedRoomBookings?.length || 0);
+      setDebugInfo(`✅ Found ${totalBookings} bookings (${formattedBookings?.length || 0} classes, ${formattedRoomBookings?.length || 0} room bookings)`);
 
     } catch (err: any) {
       console.error('❌ Load Error:', err);
@@ -250,6 +307,26 @@ export default function ClassCalendarPage() {
     return colors[Math.abs(hash) % colors.length];
   };
 
+  const getRoomBookingColor = (type: string) => {
+    const colors: Record<string, string> = {
+      trial_lesson: 'bg-green-100 border-green-300 text-green-700',
+      event: 'bg-purple-100 border-purple-300 text-purple-700',
+      meeting: 'bg-yellow-100 border-yellow-300 text-yellow-700',
+      activity: 'bg-orange-100 border-orange-300 text-orange-700',
+    };
+    return colors[type] || 'bg-gray-100 border-gray-300 text-gray-700';
+  };
+
+  const getRoomBookingLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      trial_lesson: '🎯 Trial',
+      event: '🎪 Event',
+      meeting: '🤝 Meeting',
+      activity: '🏃 Activity',
+    };
+    return labels[type] || type;
+  };
+
   const navigate = (direction: 'prev' | 'next') => {
     const newDate = new Date(selectedDate);
     if (viewMode === 'week') {
@@ -284,6 +361,20 @@ export default function ClassCalendarPage() {
     }
   };
 
+  const handleDeleteRoomBooking = async (id: string) => {
+    if (!confirm('Are you sure you want to permanently delete this room booking?')) return;
+    try {
+      const { error } = await supabase.from('room_bookings').delete().eq('id', id);
+      if (error) alert('Failed to delete: ' + error.message);
+      else {
+        setSelectedBooking(null);
+        await loadData();
+      }
+    } catch (err: any) {
+      alert('Error deleting room booking: ' + err.message);
+    }
+  };
+
   const handleUpdateBooking = async () => {
     if (!editingBooking) return;
     const { error } = await supabase
@@ -302,7 +393,7 @@ export default function ClassCalendarPage() {
   };
 
   // ==========================================
-  // RENDER: CALENDAR VIEWS
+  // RENDER: WEEK VIEW (ORIGINAL LAYOUT)
   // ==========================================
   const renderWeekView = () => {
     if (rooms.length === 0) {
@@ -333,7 +424,9 @@ export default function ClassCalendarPage() {
 
           {/* Rooms Rows */}
           {rooms.map((room) => {
-            const roomBookings = bookings.filter(b => b.room_id === room.id);
+            const roomClassBookings = bookings.filter(b => b.room_id === room.id);
+            const roomOtherBookings = roomBookings.filter(b => b.room_id === room.id);
+            const allRoomBookings = [...roomClassBookings, ...roomOtherBookings];
             
             return (
               <div key={room.id} className="grid border-b hover:bg-gray-50/30" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
@@ -345,8 +438,7 @@ export default function ClassCalendarPage() {
                 
                 {/* Day Columns */}
                 {weekDaysArray.map((day, dayIndex) => {
-                  // Filter and sort bookings for this day by time (earliest first)
-                  const dayBookings = roomBookings
+                  const dayBookings = allRoomBookings
                     .filter((b) => isSameDay(new Date(b.start_time), day))
                     .sort((a, b) => {
                       return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
@@ -359,34 +451,54 @@ export default function ClassCalendarPage() {
                           Available
                         </div>
                       ) : (
-                        dayBookings.map((booking, bookingIndex) => (
-                          <button
-                            key={booking.id}
-                            onClick={() => setSelectedBooking(booking)}
-                            className={`w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center min-h-[45px]`}
-                          >
-                            <div className="font-bold text-[11px] leading-tight line-clamp-2 mb-0.5">
-                              {booking.course?.name || 'Class'}
-                            </div>
-                            <div className="flex justify-between items-center text-[9px] text-gray-600">
-                              <span className="truncate max-w-[70px]">
-                                {booking.teacher?.full_name || 'Unknown'}
-                              </span>
-                              <span className="bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
-                                {booking.class_code || 'N/A'}
-                              </span>
-                            </div>
-                            <div className="text-[8px] text-gray-400 mt-0.5">
-                              {format(parseISO(booking.start_time), 'h:mm a')}
-                            </div>
-                            {/* Small time indicator showing position in day */}
-                            {dayBookings.length > 1 && (
-                              <div className="absolute top-0 right-0 mt-0.5 mr-0.5 text-[6px] text-gray-400 bg-white/70 px-1 rounded">
-                                #{bookingIndex + 1}
+                        dayBookings.map((booking: any, bookingIndex) => {
+                          const isRoomBooking = booking.booking_type === 'room_booking';
+                          const bgColor = isRoomBooking 
+                            ? getRoomBookingColor(booking.booking_type || 'activity')
+                            : getTeacherColor(booking.teacher?.full_name || 'Unknown');
+                          
+                          const displayName = isRoomBooking 
+                            ? booking.title || 'Room Booking'
+                            : booking.course?.name || 'Class';
+                          
+                          const teacherName = booking.teacher?.full_name || 'Unknown';
+                          const code = isRoomBooking 
+                            ? getRoomBookingLabel(booking.booking_type || 'activity')
+                            : booking.class_code || 'N/A';
+                          
+                          return (
+                            <button
+                              key={booking.id}
+                              onClick={() => setSelectedBooking({ ...booking, isRoomBooking })}
+                              className={`w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition text-[10px] ${bgColor} flex flex-col justify-center min-h-[45px]`}
+                            >
+                              <div className="font-bold text-[11px] leading-tight line-clamp-2 mb-0.5">
+                                {displayName}
                               </div>
-                            )}
-                          </button>
-                        ))
+                              <div className="flex justify-between items-center text-[9px] text-gray-600">
+                                <span className="truncate max-w-[70px]">
+                                  {teacherName}
+                                </span>
+                                <span className="bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
+                                  {code}
+                                </span>
+                              </div>
+                              <div className="text-[8px] text-gray-400 mt-0.5">
+                                {format(parseISO(booking.start_time), 'h:mm a')}
+                              </div>
+                              {isRoomBooking && (
+                                <div className="absolute top-0 right-0 mt-0.5 mr-0.5 text-[6px] text-gray-400 bg-white/70 px-1 rounded">
+                                  📋
+                                </div>
+                              )}
+                              {dayBookings.length > 1 && (
+                                <div className="absolute top-0 right-0 mt-0.5 mr-0.5 text-[6px] text-gray-400 bg-white/70 px-1 rounded">
+                                  #{bookingIndex + 1}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })
                       )}
                     </div>
                   );
@@ -436,43 +548,61 @@ export default function ClassCalendarPage() {
                   {format(slotDate, 'h:mm a')}
                 </div>
                 {rooms.map((room) => {
-                  const bookingsAtThisTime = bookings
-                    .filter(
+                  const allRoomBookings = [
+                    ...bookings.filter(
+                      (b) => 
+                        b.room_id === room.id && 
+                        isSameDay(new Date(b.start_time), selectedDate) &&
+                        new Date(b.start_time).getHours() <= hour &&
+                        new Date(b.end_time).getHours() > hour
+                    ),
+                    ...roomBookings.filter(
                       (b) => 
                         b.room_id === room.id && 
                         isSameDay(new Date(b.start_time), selectedDate) &&
                         new Date(b.start_time).getHours() <= hour &&
                         new Date(b.end_time).getHours() > hour
                     )
-                    .sort((a, b) => {
-                      return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-                    });
+                  ].sort((a, b) => {
+                    return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+                  });
                   
                   return (
                     <div key={room.id} className="p-1 border-r min-h-[60px] flex flex-col gap-1 justify-center">
-                      {bookingsAtThisTime.length > 0 ? (
-                        bookingsAtThisTime.map((booking) => (
-                          <button
-                            key={booking.id}
-                            onClick={() => setSelectedBooking(booking)}
-                            className={`w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition ${getTeacherColor(booking.teacher?.full_name || 'Unknown')} flex flex-col justify-center`}
-                          >
-                            <div className="flex justify-between items-start gap-1 mb-0.5">
-                              <span className="font-bold text-[10px] leading-tight line-clamp-1 flex-1">
-                                {booking.course?.name || 'Class'}
-                              </span>
-                              <span className="shrink-0 bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
-                                {booking.class_code || 'N/A'}
-                              </span>
-                            </div>
-                            <div className="text-[8px] text-gray-600 truncate">
-                              {booking.teacher?.full_name || 'Unknown'}
-                            </div>
-                            <div className="text-[8px] text-gray-400 mt-0.5">
-                              {format(parseISO(booking.start_time), 'h:mm')} - {format(parseISO(booking.end_time), 'h:mm')}
-                            </div>
-                          </button>
-                        ))
+                      {allRoomBookings.length > 0 ? (
+                        allRoomBookings.map((booking: any) => {
+                          const isRoomBooking = booking.booking_type === 'room_booking';
+                          const bgColor = isRoomBooking 
+                            ? getRoomBookingColor(booking.booking_type || 'activity')
+                            : getTeacherColor(booking.teacher?.full_name || 'Unknown');
+                          
+                          const displayName = isRoomBooking 
+                            ? booking.title || 'Room Booking'
+                            : booking.course?.name || 'Class';
+                          
+                          return (
+                            <button
+                              key={booking.id}
+                              onClick={() => setSelectedBooking({ ...booking, isRoomBooking })}
+                              className={`w-full text-left p-1.5 rounded shadow-sm border hover:shadow-md transition ${bgColor} flex flex-col justify-center`}
+                            >
+                              <div className="flex justify-between items-start gap-1 mb-0.5">
+                                <span className="font-bold text-[10px] leading-tight line-clamp-1 flex-1">
+                                  {displayName}
+                                </span>
+                                <span className="shrink-0 bg-white/90 px-1 rounded text-[7px] font-bold text-blue-600 border border-blue-200">
+                                  {isRoomBooking ? getRoomBookingLabel(booking.booking_type || 'activity') : (booking.class_code || 'N/A')}
+                                </span>
+                              </div>
+                              <div className="text-[8px] text-gray-600 truncate">
+                                {booking.teacher?.full_name || 'Unknown'}
+                              </div>
+                              <div className="text-[8px] text-gray-400 mt-0.5">
+                                {format(parseISO(booking.start_time), 'h:mm')} - {format(parseISO(booking.end_time), 'h:mm')}
+                              </div>
+                            </button>
+                          );
+                        })
                       ) : (
                         <span className="text-[10px] text-green-600 font-medium bg-green-100 px-2 py-0.5 rounded-full mx-auto">
                           Available
@@ -493,19 +623,24 @@ export default function ClassCalendarPage() {
   // RENDER: MANAGE VIEW
   // ==========================================
   const renderManageView = () => {
+    const allBookings = [
+      ...bookings.map(b => ({ ...b, type: 'class' })),
+      ...roomBookings.map(b => ({ ...b, type: 'room_booking' }))
+    ];
+    
     return (
       <div className="p-4">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold text-gray-800">Manage All Bookings</h2>
-          <div className="text-sm text-gray-500">{bookings.length} bookings found</div>
+          <div className="text-sm text-gray-500">{allBookings.length} bookings found</div>
         </div>
         <div className="overflow-x-auto border rounded-lg">
           <table className="w-full text-sm text-left">
             <thead className="bg-gray-50 border-b text-xs uppercase text-gray-600">
               <tr>
-                <th className="px-4 py-3">Code</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Code/Title</th>
                 <th className="px-4 py-3">Room</th>
-                <th className="px-4 py-3">Course</th>
                 <th className="px-4 py-3">Teacher</th>
                 <th className="px-4 py-3">Start</th>
                 <th className="px-4 py-3">End</th>
@@ -513,20 +648,34 @@ export default function ClassCalendarPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {bookings.length === 0 ? (
+              {allBookings.length === 0 ? (
                 <tr><td colSpan={7} className="p-8 text-center text-gray-400">No bookings found for this date range.</td></tr>
               ) : (
-                bookings.map((b) => (
+                allBookings.map((b: any) => (
                   <tr key={b.id} className="hover:bg-gray-50/50 transition">
-                    <td className="px-4 py-3 font-mono text-xs font-bold text-gray-600">{b.class_code || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        b.type === 'class' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {b.type === 'class' ? '📚 Class' : '📋 Room'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-gray-600">
+                      {b.type === 'class' ? (b.class_code || '-') : (b.title || '-')}
+                    </td>
                     <td className="px-4 py-3 font-medium">{getRoomName(b.room_id)}</td>
-                    <td className="px-4 py-3">{b.course?.name || '-'}</td>
                     <td className="px-4 py-3">{b.teacher?.full_name || '-'}</td>
                     <td className="px-4 py-3">{format(parseISO(b.start_time), 'MMM d, h:mm a')}</td>
                     <td className="px-4 py-3">{format(parseISO(b.end_time), 'h:mm a')}</td>
                     <td className="px-4 py-3 flex justify-center gap-2">
-                      <button onClick={() => setEditingBooking(b)} className="p-1 text-blue-600 hover:bg-blue-50 rounded transition" title="Edit">✏️</button>
-                      <button onClick={() => handleDeleteBooking(b.id)} className="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
+                      {b.type === 'class' ? (
+                        <>
+                          <button onClick={() => setEditingBooking(b)} className="p-1 text-blue-600 hover:bg-blue-50 rounded transition" title="Edit">✏️</button>
+                          <button onClick={() => handleDeleteBooking(b.id)} className="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
+                        </>
+                      ) : (
+                        <button onClick={() => handleDeleteRoomBooking(b.id)} className="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -607,9 +756,19 @@ export default function ClassCalendarPage() {
             </div>
           </div>
 
-          {/* Separator & Teachers Button */}
+          {/* Manage Bookings Button */}
+          <button 
+            onClick={() => setShowManageView(!showManageView)}
+            className={`px-4 py-2 text-xs font-medium rounded-lg transition shadow-sm flex items-center gap-2 ${
+              showManageView ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+            }`}
+          >
+            {showManageView ? '📊 Calendar' : '📋 Manage'}
+          </button>
+
+          {/* Teachers Button */}
           <Link href="/dashboard/staff/teachers/calendar">
-            <button className="px-4 py-2 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm flex items-center gap-2">
+            <button className="px-4 py-2 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition shadow-sm flex items-center gap-2">
               👨‍🏫 Teachers
             </button>
           </Link>
@@ -631,16 +790,88 @@ export default function ClassCalendarPage() {
               <button onClick={() => setSelectedBooking(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="space-y-3 text-sm">
-              <div className="flex justify-between border-b pb-2"><span className="text-gray-500">Class Code</span><span className="font-mono font-bold text-gray-700">{selectedBooking.class_code || 'N/A'}</span></div>
-              <div className="flex justify-between border-b pb-2"><span className="text-gray-500">Room</span><span className="font-medium">{getRoomName(selectedBooking.room_id)}</span></div>
-              <div className="flex justify-between border-b pb-2"><span className="text-gray-500">Course</span><span className="font-medium">{selectedBooking.course?.name || 'Unknown'}</span></div>
-              <div className="flex justify-between border-b pb-2"><span className="text-gray-500">Teacher</span><span className="font-medium">👨‍🏫 {selectedBooking.teacher?.full_name || 'Not Assigned'}</span></div>
-              <div className="flex justify-between border-b pb-2"><span className="text-gray-500">Time</span><span className="font-medium">{format(parseISO(selectedBooking.start_time), 'MMM d, h:mm a')} - {format(parseISO(selectedBooking.end_time), 'h:mm a')}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Status</span><span className={`px-2 py-0.5 rounded-full text-xs text-white ${getStatusColor(selectedBooking.status)}`}>{getStatusLabel(selectedBooking.status)}</span></div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">Type</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                  selectedBooking.isRoomBooking ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                }`}>
+                  {selectedBooking.isRoomBooking ? '📋 Room Booking' : '📚 Class'}
+                </span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">{selectedBooking.isRoomBooking ? 'Title' : 'Class Code'}</span>
+                <span className="font-mono font-bold text-gray-700">
+                  {selectedBooking.isRoomBooking ? (selectedBooking.title || 'N/A') : (selectedBooking.class_code || 'N/A')}
+                </span>
+              </div>
+              {selectedBooking.isRoomBooking && selectedBooking.booking_type && (
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-gray-500">Booking Type</span>
+                  <span className="font-medium">{getRoomBookingLabel(selectedBooking.booking_type)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">Room</span>
+                <span className="font-medium">{getRoomName(selectedBooking.room_id)}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">{selectedBooking.isRoomBooking ? 'Course/Activity' : 'Course'}</span>
+                <span className="font-medium">{selectedBooking.course?.name || selectedBooking.title || 'Unknown'}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">Teacher</span>
+                <span className="font-medium">👨‍🏫 {selectedBooking.teacher?.full_name || 'Not Assigned'}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500">Time</span>
+                <span className="font-medium">{format(parseISO(selectedBooking.start_time), 'MMM d, h:mm a')} - {format(parseISO(selectedBooking.end_time), 'h:mm a')}</span>
+              </div>
+              {selectedBooking.isRoomBooking && selectedBooking.student_count > 0 && (
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-gray-500">Students</span>
+                  <span className="font-medium">{selectedBooking.student_count}</span>
+                </div>
+              )}
+              {selectedBooking.isRoomBooking && selectedBooking.requestor_name && (
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-gray-500">Requestor</span>
+                  <span className="font-medium">{selectedBooking.requestor_name}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-500">Status</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs text-white ${getStatusColor(selectedBooking.status)}`}>
+                  {getStatusLabel(selectedBooking.status)}
+                </span>
+              </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => handleDeleteBooking(selectedBooking.id)} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">Delete</button>
               <button onClick={() => setSelectedBooking(null)} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition">Close</button>
+              {selectedBooking.isRoomBooking ? (
+                <button 
+                  onClick={() => {
+                    if (confirm('Delete this room booking?')) {
+                      handleDeleteRoomBooking(selectedBooking.id);
+                      setSelectedBooking(null);
+                    }
+                  }} 
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                >
+                  Delete
+                </button>
+              ) : (
+                <button 
+                  onClick={() => {
+                    if (confirm('Delete this booking?')) {
+                      handleDeleteBooking(selectedBooking.id);
+                      setSelectedBooking(null);
+                    }
+                  }} 
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         </div>
