@@ -78,13 +78,16 @@ export class RoomBookingService {
     return data;
   }
 
-  // Check if a room is available - checks both class bookings and room bookings
+  // Check if a room is available
   static async checkAvailability(roomId: string, startTime: string, endTime: string) {
     try {
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+
       // Check class bookings for overlap
       const { data: classBookings, error: classError } = await supabase
         .from('bookings')
-        .select('id')
+        .select('id, start_time, end_time')
         .eq('room_id', roomId)
         .eq('status', 'confirmed')
         .not('start_time', 'is', null)
@@ -92,11 +95,14 @@ export class RoomBookingService {
 
       if (classError) throw classError;
 
-      // Check if any class booking overlaps
-      if (classBookings && classBookings.length > 0) {
-        // We need to check each booking for overlap
-        const hasConflict = await this.checkOverlapWithBookings(classBookings, startTime, endTime);
-        if (hasConflict) return false;
+      if (classBookings) {
+        for (const booking of classBookings) {
+          const bStart = new Date(booking.start_time);
+          const bEnd = new Date(booking.end_time);
+          if (bStart < end && bEnd > start) {
+            return false;
+          }
+        }
       }
 
       // Check room bookings for overlap
@@ -110,10 +116,14 @@ export class RoomBookingService {
 
       if (roomError) throw roomError;
 
-      // Check if any room booking overlaps
-      if (roomBookings && roomBookings.length > 0) {
-        const hasConflict = await this.checkOverlapWithBookings(roomBookings, startTime, endTime);
-        if (hasConflict) return false;
+      if (roomBookings) {
+        for (const booking of roomBookings) {
+          const bStart = new Date(booking.start_time);
+          const bEnd = new Date(booking.end_time);
+          if (bStart < end && bEnd > start) {
+            return false;
+          }
+        }
       }
 
       return true;
@@ -123,26 +133,9 @@ export class RoomBookingService {
     }
   }
 
-  // Helper to check overlap with a list of bookings
-  private static async checkOverlapWithBookings(bookings: any[], startTime: string, endTime: string): Promise<boolean> {
-    const start = new Date(startTime);
-    const end = new Date(endTime);
-
-    for (const booking of bookings) {
-      const bStart = new Date(booking.start_time);
-      const bEnd = new Date(booking.end_time);
-      
-      // Check if there's any overlap: booking starts before endTime AND booking ends after startTime
-      if (bStart < end && bEnd > start) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   // Create a new booking
   static async createBooking(booking: RoomBooking) {
-    // First check availability with proper overlap check
+    // First check availability
     const isAvailable = await this.checkAvailability(
       booking.room_id,
       booking.start_time,
@@ -153,10 +146,10 @@ export class RoomBookingService {
       throw new Error('Room is not available for the selected time slot');
     }
 
-    // Prepare attendees if meeting
-    let attendees = [];
+    // Prepare attendees - explicitly type as string[]
+    let attendeesList: string[] = [];
     if (booking.booking_type === 'meeting' && booking.attendees) {
-      attendees = booking.attendees;
+      attendeesList = booking.attendees;
     }
 
     const payload = {
@@ -173,8 +166,8 @@ export class RoomBookingService {
       course_id: booking.course_id || null,
       module_id: booking.module_id || null,
       event_type: booking.event_type || null,
-      attendees: attendees,
-      attendee_count: attendees.length,
+      attendees: attendeesList.length > 0 ? attendeesList : null,
+      attendee_count: attendeesList.length,
       notes: booking.notes || null,
       is_recurring: booking.is_recurring || false,
       recurrence_rule: booking.recurrence_rule || null,
@@ -235,13 +228,14 @@ export class RoomBookingService {
   // Send notification (calls API route)
   private static async sendNotification(bookingId: string) {
     try {
-      await fetch('/api/room-booking/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
-      });
+      // Call the edge function directly for room booking notification
+      const edgeUrl = `https://rrealtsrnktaragpuyae.supabase.co/functions/v1/class-guardian?action=room_booking&bookingId=${bookingId}`;
+      console.log('📤 Sending room booking notification to:', edgeUrl);
+      const response = await fetch(edgeUrl, { method: 'GET' });
+      const result = await response.json();
+      console.log('📥 Room booking notification response:', result);
     } catch (error) {
-      console.error('Failed to send notification:', error);
+      console.error('❌ Failed to send room booking notification:', error);
     }
   }
 }
