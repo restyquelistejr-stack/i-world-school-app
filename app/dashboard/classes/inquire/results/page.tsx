@@ -11,11 +11,11 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [foundOptions, setFoundOptions] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
-
   const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
 
   const courseId = searchParams.get('courseId');
-  const selectedLevel = searchParams.get('selectedLevel') || '';
+  const moduleId = searchParams.get('moduleId');
+  const selectedTeachers = JSON.parse(searchParams.get('selectedTeachers') || '[]');
   const packageId = searchParams.get('packageId');
   const maxStudents = parseInt(searchParams.get('maxStudents') || '1');
   const startDateStr = searchParams.get('startDate') || '';
@@ -31,7 +31,7 @@ export default function ResultsPage() {
   const getPossibleTimeSlots = (prefStart: string, prefEnd: string) => {
     const slots = [];
     const [startHour, startMinute] = prefStart.split(':').map(Number);
-    const [endHour, endMinute] = prefEnd.split(':').map(Number);
+    const [endHour] = prefEnd.split(':').map(Number);
     
     let currentHour = Math.max(startHour, 9);
     let currentMinute = 0;
@@ -67,8 +67,8 @@ export default function ResultsPage() {
     setError(null);
     
     try {
-      if (!courseId) {
-        setError('No course selected');
+      if (!courseId || !moduleId) {
+        setError('No course or module selected');
         setLoading(false);
         return;
       }
@@ -76,16 +76,21 @@ export default function ResultsPage() {
       const startWindow = startOfDay(new Date(startDateStr));
       const endWindow = addDays(startWindow, duration);
 
-      const [
-        staffCoursesRes,
-        roomsRes,
-        bookingsRes,
-        optionsRes,
-        leavesRes,
-        courseRes,
-        availabilityRes
-      ] = await Promise.all([
-        supabase.from('staff_courses').select('staff_id').eq('course_id', courseId),
+      // Get module info
+      const { data: moduleData } = await supabase
+        .from('course_modules')
+        .select('title, level')
+        .eq('id', moduleId)
+        .single();
+
+      // Get teacher qualifications for this module
+      let teacherFilter = {};
+      if (selectedTeachers.length > 0) {
+        teacherFilter = { teacher_id: selectedTeachers };
+      }
+
+      const [staffModulesRes, roomsRes, bookingsRes, optionsRes, leavesRes, courseRes, availabilityRes] = await Promise.all([
+        supabase.from('teacher_modules').select('teacher_id').eq('module_id', moduleId).eq('is_active', true),
         supabase.from('rooms').select('*').eq('is_active', true).gte('capacity', maxStudents).order('capacity'),
         supabase.from('bookings').select('room_id, teacher_id, start_time, end_time'),
         supabase.from('class_options').select('room_id, teacher_id, start_time, end_time, class_id'),
@@ -94,13 +99,13 @@ export default function ResultsPage() {
         supabase.from('teacher_availability').select('*'),
       ]);
 
-      if (staffCoursesRes.error || roomsRes.error || bookingsRes.error || optionsRes.error || leavesRes.error) {
+      if (staffModulesRes.error || roomsRes.error || bookingsRes.error || optionsRes.error || leavesRes.error) {
         setError('Failed to fetch required data');
         setLoading(false);
         return;
       }
 
-      const staffCourses = staffCoursesRes.data || [];
+      const staffModules = staffModulesRes.data || [];
       const rooms = roomsRes.data || [];
       const allBookings = bookingsRes.data || [];
       const allOptions = optionsRes.data || [];
@@ -108,21 +113,33 @@ export default function ResultsPage() {
       const course = courseRes.data;
       const teacherAvailability = availabilityRes.data || [];
 
-      if (!staffCourses.length) { 
-        setError('No teachers are qualified to teach this course');
+      if (!staffModules.length) { 
+        setError('No teachers are qualified to teach this module');
         setLoading(false); 
         return; 
       }
 
-      const eligibleIds = staffCourses.map((s: any) => s.staff_id);
+      const eligibleIds = staffModules.map((s: any) => s.teacher_id);
+      
+      // If specific teachers were selected, filter by them
+      let finalEligibleIds = eligibleIds;
+      if (selectedTeachers.length > 0) {
+        finalEligibleIds = eligibleIds.filter((id: string) => selectedTeachers.includes(id));
+        if (finalEligibleIds.length === 0) {
+          setError('Selected teachers are not qualified for this module');
+          setLoading(false);
+          return;
+        }
+      }
+
       const { data: teachers } = await supabase
         .from('users')
         .select('id, full_name')
         .eq('role', 'teacher')
-        .in('id', eligibleIds);
+        .in('id', finalEligibleIds);
 
       if (!teachers || !teachers.length) { 
-        setError('No teachers found for this course');
+        setError('No teachers found for this module');
         setLoading(false); 
         return; 
       }
@@ -301,7 +318,7 @@ export default function ResultsPage() {
         .from('classes')
         .insert({
           course_id: courseId,
-          level: selectedLevel,
+          module_id: moduleId,
           package_id: packageId || null,
           package_name: getPackageName(),
           max_students: maxStudents,
@@ -375,12 +392,12 @@ export default function ResultsPage() {
 
       const classData = {
         course_id: courseId,
+        module_id: moduleId,
         teacher_id: teacherId,
         room_id: selectedOption.room_id,
         max_students: maxStudents,
         total_sessions: selectedOption.total_sessions_needed,
         hours_per_session: selectedOption.hours_per_session,
-        selected_level: selectedLevel,
         package_id: packageId || null,
         package_name: getPackageName(),
         requested_start_date: startDateStr,
@@ -463,10 +480,10 @@ export default function ResultsPage() {
         <span><span className="font-medium">Session Configuration:</span> {totalSessions} sessions × {hoursPerSession}h = {totalHours}h total</span>
         <span className="text-blue-400">|</span>
         <span>Package: <span className="font-medium">{getPackageName()}</span></span>
-        {selectedLevel && (
+        {selectedTeachers.length > 0 && (
           <>
             <span className="text-blue-400">|</span>
-            <span>Level: <span className="font-medium">{selectedLevel}</span></span>
+            <span>Selected Teachers: <span className="font-medium">{selectedTeachers.length} teacher(s)</span></span>
           </>
         )}
       </div>

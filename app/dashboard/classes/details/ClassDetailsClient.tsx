@@ -1,72 +1,46 @@
+// app/dashboard/classes/details/ClassDetailsClient.tsx
+// ⭐ v3.8: Shows substitute teacher when assigned
+// ⭐ v3.9: Teacher contact info visible in summary
 'use client';
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-
-const GENDERS = ['Male', 'Female', 'Other', 'prefer_not_to_say'];
-const NATIONALITIES = [
-  'Afghan', 'Albanian', 'Algerian', 'American', 'Argentine', 'Australian', 'Austrian', 
-  'Bangladeshi', 'Belgian', 'Brazilian', 'British', 'Bulgarian', 'Canadian', 'Chilean', 
-  'Chinese', 'Colombian', 'Croatian', 'Cuban', 'Czech', 'Danish', 'Dutch', 'Egyptian', 
-  'English', 'Filipino', 'Finnish', 'French', 'German', 'Greek', 'Hong Konger', 
-  'Hungarian', 'Icelandic', 'Indian', 'Indonesian', 'Iranian', 'Iraqi', 'Irish', 
-  'Israeli', 'Italian', 'Jamaican', 'Japanese', 'Jordanian', 'Kenyan', 'Korean', 
-  'Kuwaiti', 'Lebanese', 'Malaysian', 'Mexican', 'Moroccan', 'New Zealander', 
-  'Nigerian', 'Norwegian', 'Pakistani', 'Peruvian', 'Polish', 'Portuguese', 
-  'Romanian', 'Russian', 'Saudi', 'Scottish', 'Singaporean', 'Slovak', 'South African', 
-  'Spanish', 'Swedish', 'Swiss', 'Taiwanese', 'Thai', 'Turkish', 'Ukrainian', 
-  'Vietnamese', 'Welsh'
-];
-const EDUCATION_LEVELS = [
-  'Primary School',
-  'Secondary / High School',
-  'Diploma / Polytechnic',
-  'Bachelor\'s Degree',
-  'Master\'s Degree',
-  'Doctorate / PhD',
-  'Professional Certification',
-  'Other'
-];
+import EnrollStudentsModal from '@/components/EnrollStudentsModal';
+import TeacherContactInfo from '@/components/TeacherContactInfo';
 
 export default function ClassDetailsClient({ classId }: { classId: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  
+
   const [classData, setClassData] = useState<any>(null);
   const [courseName, setCourseName] = useState('');
-  const [courseLevel, setCourseLevel] = useState('');
+  const [moduleTitle, setModuleTitle] = useState('');
+  const [moduleLevel, setModuleLevel] = useState('');
+  const [moduleSessions, setModuleSessions] = useState<any[]>([]);
   const [teacherName, setTeacherName] = useState('');
   const [roomName, setRoomName] = useState('');
   const [lockedSchedules, setLockedSchedules] = useState<any[]>([]);
   const [inquiryPreferences, setInquiryPreferences] = useState<any[]>([]);
   const [enrolledStudents, setEnrolledStudents] = useState<any[]>([]);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
+  // ⭐ v3.9: teacher contact state
+  const [teacherContact, setTeacherContact] = useState<{
+    full_name: string;
+    email?: string;
+    phone?: string;
+    teacher_type?: string;
+  } | null>(null);
 
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
-  const [submittingStudents, setSubmittingStudents] = useState(false);
-  const [modalMode, setModalMode] = useState<'new' | 'existing'>('new');
 
-  const [newStudents, setNewStudents] = useState<any[]>([
-    {
-      full_name: '',
-      email: '',
-      phone: '',
-      gender: 'prefer_not_to_say',
-      nationality: '',
-      date_of_birth: '',
-      educational_background: '',
-      emergency_contact: '',
-      emergency_phone: '',
-      availabilitySlots: []
-    }
-  ]);
-
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [selectedExistingIds, setSelectedExistingIds] = useState<string[]>([]);
-
+  // ==========================================================
+  // LOAD DETAILS
+  // ==========================================================
   const loadDetails = async () => {
     if (!classId) {
       setNotFound(true);
@@ -91,19 +65,35 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
 
       const [
         courseRes,
-        modulesRes,
+        moduleRes,
+        moduleSessionsRes,
         teacherRes,
         roomRes,
         scheduleRes,
         inquiryRes,
-        studentRes
+        bookingsRes,
       ] = await Promise.all([
         supabase.from('courses').select('name').eq('id', c.course_id).single(),
-        supabase.from('course_modules').select('level').eq('course_id', c.course_id).limit(1).single(),
-        c.teacher_id ? supabase.from('users').select('full_name').eq('id', c.teacher_id).single() : Promise.resolve({ data: null }),
-        c.room_id ? supabase.from('rooms').select('name').eq('id', c.room_id).single() : Promise.resolve({ data: null }),
-        // Updated query to include room and teacher names
-        supabase.from('class_options')
+        c.module_id
+          ? supabase.from('course_modules').select('title, level').eq('id', c.module_id).single()
+          : Promise.resolve({ data: null }),
+        c.module_id
+          ? supabase.from('module_sessions').select('*').eq('module_id', c.module_id).order('session_number')
+          : Promise.resolve({ data: [] }),
+
+        // ⭐ v3.9: fetch teacher + contact info
+        c.teacher_id
+          ? Promise.all([
+              supabase.from('users').select('full_name, email, phone').eq('id', c.teacher_id).single(),
+              supabase.from('teachers').select('teacher_type').eq('id', c.teacher_id).maybeSingle(),
+            ]).then(([u, p]) => ({ data: { ...u.data, teacher_type: p.data?.teacher_type || null } }))
+          : Promise.resolve({ data: null }),
+
+        c.room_id
+          ? supabase.from('rooms').select('name').eq('id', c.room_id).single()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from('class_options')
           .select(`
             *,
             rooms:room_id (name),
@@ -112,27 +102,96 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
           .eq('class_id', classId)
           .order('session_index'),
         supabase.from('inquiry_availability').select('*').eq('class_id', classId),
-        supabase.from('class_enrollments').select('id, student_id, student:student_id(id, full_name, email)').eq('class_id', classId).eq('status', 'active')
+        supabase
+          .from('bookings')
+          .select('id, start_time, end_time, teacher_id, substitute_teacher_id, needs_attention, attention_reason')
+          .eq('class_id', classId)
+          .in('status', ['confirmed', 'in_progress', 'pending']),
       ]);
 
       if (courseRes.data) setCourseName(courseRes.data.name);
-      if (modulesRes.data) setCourseLevel(modulesRes.data.level || 'N/A');
-      if (teacherRes.data) setTeacherName(teacherRes.data.full_name);
-      if (roomRes.data) setRoomName(roomRes.data.name);
-      
-      if (scheduleRes.data) {
-        // Map the room and teacher names to each schedule item
-        const scheduleWithDetails = scheduleRes.data.map(item => ({
-          ...item,
-          room_name: item.rooms?.name || roomRes.data?.name || 'Not Assigned',
-          teacher_name: item.users?.full_name || teacherRes.data?.full_name || 'Not Assigned'
-        }));
-        setLockedSchedules(scheduleWithDetails);
+      if (moduleRes.data) {
+        setModuleTitle(moduleRes.data.title);
+        setModuleLevel(moduleRes.data.level || 'N/A');
       }
-      
-      if (inquiryRes.data) setInquiryPreferences(inquiryRes.data || []);
-      if (studentRes.data) setEnrolledStudents(studentRes.data);
+      if (moduleSessionsRes.data) setModuleSessions(moduleSessionsRes.data || []);
 
+      // ⭐ v3.9: set teacher contact info
+      if (teacherRes.data) {
+        setTeacherName(teacherRes.data.full_name);
+        setTeacherContact({
+          full_name: teacherRes.data.full_name,
+          email: teacherRes.data.email || undefined,
+          phone: teacherRes.data.phone || undefined,
+          teacher_type: teacherRes.data.teacher_type || undefined,
+        });
+      }
+
+      if (roomRes.data) setRoomName(roomRes.data.name);
+
+      // ⭐ v3.8: Build substitute map keyed by booking start_time
+      const bookings = bookingsRes.data || [];
+
+      const substituteTeacherIds = [
+        ...new Set(bookings.map((b: any) => b.substitute_teacher_id).filter(Boolean)),
+      ];
+
+      const { data: substituteTeachers } = substituteTeacherIds.length > 0
+        ? await supabase.from('users').select('id, full_name').in('id', substituteTeacherIds)
+        : { data: [] as any[] };
+
+      const substituteTeacherMap: Record<string, string> = {};
+      (substituteTeachers || []).forEach((t: any) => {
+        substituteTeacherMap[t.id] = t.full_name;
+      });
+
+      const substituteByStartTime: Record<string, {
+        substitute_teacher_id: string;
+        substitute_teacher_name: string;
+        needs_attention: boolean;
+        attention_reason: string | null;
+      }> = {};
+
+      for (const b of bookings) {
+        if (b.substitute_teacher_id) {
+          substituteByStartTime[b.start_time] = {
+            substitute_teacher_id: b.substitute_teacher_id,
+            substitute_teacher_name: substituteTeacherMap[b.substitute_teacher_id] || 'Substitute',
+            needs_attention: b.needs_attention || false,
+            attention_reason: b.attention_reason || null,
+          };
+        }
+      }
+
+      if (scheduleRes.data) {
+        const scheduleWithDetails = scheduleRes.data.map((item: any) => {
+          const subInfo = substituteByStartTime[item.start_time];
+          return {
+            ...item,
+            room_name: item.rooms?.name || roomRes.data?.name || 'Not Assigned',
+            teacher_name: item.users?.full_name || teacherRes.data?.full_name || 'Not Assigned',
+            substitute_teacher_id: subInfo?.substitute_teacher_id || null,
+            substitute_teacher_name: subInfo?.substitute_teacher_name || null,
+            needs_attention: subInfo?.needs_attention || false,
+            attention_reason: subInfo?.attention_reason || null,
+          };
+        });
+        setLockedSchedules(scheduleWithDetails);
+
+        if (scheduleRes.data.length > 0) {
+          const sorted = [...scheduleRes.data].sort(
+            (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+          );
+          const first = sorted[0];
+          const last = sorted[sorted.length - 1];
+          if (first) setStartDate(new Date(first.start_time).toLocaleDateString());
+          if (last) setEndDate(new Date(last.start_time).toLocaleDateString());
+        }
+      }
+
+      if (inquiryRes.data) setInquiryPreferences(inquiryRes.data || []);
+
+      await loadEnrolledStudents();
     } catch (err) {
       console.error('Error loading details:', err);
       setNotFound(true);
@@ -140,323 +199,49 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
     setLoading(false);
   };
 
+  // ==========================================================
+  // LOAD ENROLLED STUDENTS
+  // ==========================================================
+  const loadEnrolledStudents = async () => {
+    const { data: enrollmentRows } = await supabase
+      .from('class_enrollments')
+      .select('id, student_id, status')
+      .eq('class_id', classId)
+      .eq('status', 'active');
+
+    if (!enrollmentRows || enrollmentRows.length === 0) {
+      setEnrolledStudents([]);
+      return;
+    }
+
+    const studentIds = enrollmentRows.map((e: any) => e.student_id).filter(Boolean);
+
+    const { data: studentUsers } = await supabase
+      .from('users')
+      .select('id, full_name, email')
+      .in('id', studentIds);
+
+    const studentMap = Object.fromEntries(
+      (studentUsers || []).map((u: any) => [u.id, u])
+    );
+
+    setEnrolledStudents(
+      enrollmentRows.map((e: any) => ({
+        id: e.id,
+        student_id: e.student_id,
+        status: e.status,
+        student: studentMap[e.student_id] || null,
+      }))
+    );
+  };
+
   useEffect(() => {
     if (classId) loadDetails();
   }, [classId]);
 
   // ==========================================================
-  // NEW STUDENTS LOGIC
+  // UNENROLL STUDENT
   // ==========================================================
-  const addStudentRow = () => {
-    setNewStudents([
-      ...newStudents,
-      {
-        full_name: '',
-        email: '',
-        phone: '',
-        gender: 'prefer_not_to_say',
-        nationality: '',
-        date_of_birth: '',
-        educational_background: '',
-        emergency_contact: '',
-        emergency_phone: '',
-        availabilitySlots: []
-      }
-    ]);
-  };
-
-  const removeStudentRow = (index: number) => {
-    if (newStudents.length <= 1) {
-      alert('You must have at least one student.');
-      return;
-    }
-    const updated = newStudents.filter((_, i) => i !== index);
-    setNewStudents(updated);
-  };
-
-  const updateStudentRow = (index: number, field: string, value: any) => {
-    const updated = [...newStudents];
-    updated[index] = { ...updated[index], [field]: value };
-    setNewStudents(updated);
-  };
-
-  const applyBulkAvailability = (days: number[], start: string, end: string) => {
-    const slotsToApply = days.map(day => ({ day_of_week: day, start_time: start, end_time: end }));
-    
-    const updated = newStudents.map(student => ({
-      ...student,
-      availabilitySlots: slotsToApply
-    }));
-    setNewStudents(updated);
-    alert(`✅ Applied availability to all ${updated.length} students!`);
-  };
-
-  const addAvailabilitySlotToRow = (studentIndex: number, slot: any) => {
-    const updated = [...newStudents];
-    const exists = updated[studentIndex].availabilitySlots.some(
-      (s: any) => s.day_of_week === slot.day_of_week && s.start_time === slot.start_time
-    );
-    if (!exists) {
-      updated[studentIndex].availabilitySlots.push(slot);
-      setNewStudents(updated);
-    }
-  };
-
-  const removeAvailabilitySlotFromRow = (studentIndex: number, slotIndex: number) => {
-    const updated = [...newStudents];
-    updated[studentIndex].availabilitySlots.splice(slotIndex, 1);
-    setNewStudents(updated);
-  };
-
-  const searchExistingStudents = async () => {
-    if (!searchTerm.trim()) return;
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, full_name, email')
-      .eq('role', 'student')
-      .eq('is_active', true)
-      .ilike('full_name', `%${searchTerm}%`)
-      .limit(10);
-    
-    if (!error) setSearchResults(data || []);
-  };
-
-  const toggleExistingSelection = (id: string) => {
-    setSelectedExistingIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
-  };
-
-  // ==========================================================
-  // ENROLL EXISTING STUDENTS
-  // ==========================================================
-  const enrollExistingStudents = async () => {
-    if (selectedExistingIds.length === 0) {
-      alert('Please select at least one student.');
-      return;
-    }
-
-    setSubmittingStudents(true);
-    try {
-      const { data: classSchedule, error: scheduleError } = await supabase
-        .from('class_options')
-        .select('start_time, end_time')
-        .eq('class_id', classData.id);
-
-      if (scheduleError || !classSchedule || classSchedule.length === 0) {
-        alert('Error: This class has no scheduled times. Please set the schedule before enrolling students.');
-        setSubmittingStudents(false);
-        return;
-      }
-
-      for (const studentId of selectedExistingIds) {
-        const { data: existingEnrollments, error: enrollError } = await supabase
-          .from('class_enrollments')
-          .select('class_id')
-          .eq('student_id', studentId)
-          .eq('status', 'active');
-
-        if (enrollError) throw enrollError;
-
-        if (existingEnrollments && existingEnrollments.length > 0) {
-          const existingClassIds = existingEnrollments.map(e => e.class_id);
-
-          const { data: existingSchedules, error: existingSchError } = await supabase
-            .from('class_options')
-            .select('start_time, end_time')
-            .in('class_id', existingClassIds);
-
-          if (existingSchError) throw existingSchError;
-
-          let hasConflict = false;
-          for (const newSlot of classSchedule) {
-            const newStart = new Date(newSlot.start_time);
-            const newEnd = new Date(newSlot.end_time);
-
-            for (const oldSlot of existingSchedules || []) {
-              const oldStart = new Date(oldSlot.start_time);
-              const oldEnd = new Date(oldSlot.end_time);
-
-              if (newStart < oldEnd && newEnd > oldStart) {
-                hasConflict = true;
-                break;
-              }
-            }
-            if (hasConflict) break;
-          }
-
-          if (hasConflict) {
-            const { data: studentData } = await supabase
-              .from('users')
-              .select('full_name')
-              .eq('id', studentId)
-              .single();
-
-            alert(`❌ Conflict detected! "${studentData?.full_name || 'Student'}" is already enrolled in another class that overlaps with this schedule. They were not enrolled.`);
-            setSubmittingStudents(false);
-            return;
-          }
-        }
-      }
-
-      const enrollmentsToInsert = selectedExistingIds.map(id => ({
-        class_id: classData.id,
-        student_id: id,
-        status: 'active',
-      }));
-
-      const { error: enrollError } = await supabase
-        .from('class_enrollments')
-        .insert(enrollmentsToInsert);
-
-      if (enrollError) throw enrollError;
-
-      alert(`✅ Successfully enrolled ${selectedExistingIds.length} existing student(s)!`);
-      setSelectedExistingIds([]);
-      setSearchResults([]);
-      setSearchTerm('');
-      loadDetails();
-    } catch (error: any) {
-      alert('Error enrolling students: ' + error.message);
-    } finally {
-      setSubmittingStudents(false);
-    }
-  };
-
-  // ==========================================================
-  // FINAL SUBMIT (NEW STUDENTS)
-  // ==========================================================
-  const handleBulkRegister = async () => {
-    const validRows = newStudents.filter(s => s.full_name.trim() && s.email.trim());
-    if (validRows.length === 0) {
-      alert('Please ensure at least one student has a Name and Email.');
-      return;
-    }
-
-    setSubmittingStudents(true);
-    try {
-      const { data: classSchedule, error: scheduleError } = await supabase
-        .from('class_options')
-        .select('start_time, end_time')
-        .eq('class_id', classData.id);
-
-      if (scheduleError) throw new Error('Failed to load class schedule for conflict check.');
-      if (!classSchedule || classSchedule.length === 0) {
-        alert('Error: This class has no scheduled times. Please set the schedule before enrolling students.');
-        setSubmittingStudents(false);
-        return;
-      }
-
-      const usersToInsert = validRows.map(s => ({
-        full_name: s.full_name.trim(),
-        email: s.email.trim(),
-        phone: s.phone || null,
-        gender: s.gender === '' || s.gender === 'prefer_not_to_say' ? null : s.gender,
-        nationality: s.nationality || null,
-        date_of_birth: s.date_of_birth || null,
-        educational_background: s.educational_background || null,
-        emergency_contact: s.emergency_contact || null,
-        emergency_phone: s.emergency_phone || null,
-        role: 'student',
-        is_active: true,
-      }));
-
-      const { data: createdUsers, error: createError } = await supabase
-        .from('users')
-        .insert(usersToInsert)
-        .select('id');
-      
-      if (createError) throw createError;
-      if (!createdUsers) throw new Error('Failed to create users.');
-
-      for (let i = 0; i < createdUsers.length; i++) {
-        const userId = createdUsers[i].id;
-        const studentName = validRows[i].full_name;
-
-        const { data: existingEnrollments, error: enrollError } = await supabase
-          .from('class_enrollments')
-          .select('class_id')
-          .eq('student_id', userId)
-          .eq('status', 'active');
-
-        if (enrollError) throw enrollError;
-
-        if (existingEnrollments && existingEnrollments.length > 0) {
-          const existingClassIds = existingEnrollments.map(e => e.class_id);
-
-          const { data: existingSchedules, error: existingSchError } = await supabase
-            .from('class_options')
-            .select('start_time, end_time')
-            .in('class_id', existingClassIds);
-
-          if (existingSchError) throw existingSchError;
-
-          let hasConflict = false;
-          for (const newSlot of classSchedule) {
-            const newStart = new Date(newSlot.start_time);
-            const newEnd = new Date(newSlot.end_time);
-
-            for (const oldSlot of existingSchedules || []) {
-              const oldStart = new Date(oldSlot.start_time);
-              const oldEnd = new Date(oldSlot.end_time);
-
-              if (newStart < oldEnd && newEnd > oldStart) {
-                hasConflict = true;
-                break;
-              }
-            }
-            if (hasConflict) break;
-          }
-
-          if (hasConflict) {
-            await supabase.from('users').delete().eq('id', userId);
-            alert(`❌ Conflict detected! "${studentName}" is already enrolled in another class that overlaps with this schedule. They were not enrolled.`);
-            setSubmittingStudents(false);
-            return;
-          }
-        }
-      }
-
-      const enrollmentsToInsert = createdUsers.map((user: any) => ({
-        class_id: classData.id,
-        student_id: user.id,
-        status: 'active',
-      }));
-
-      const { error: enrollError } = await supabase
-        .from('class_enrollments')
-        .insert(enrollmentsToInsert);
-      
-      if (enrollError) throw enrollError;
-
-      for (let i = 0; i < createdUsers.length; i++) {
-        const student = validRows[i];
-        const userId = createdUsers[i].id;
-        if (student.availabilitySlots && student.availabilitySlots.length > 0) {
-          const slotsToInsert = student.availabilitySlots.map((slot: any) => ({
-            student_id: userId,
-            day_of_week: slot.day_of_week,
-            start_time: slot.start_time,
-            end_time: slot.end_time,
-            is_active: true
-          }));
-          await supabase.from('student_availability').insert(slotsToInsert);
-        }
-      }
-
-      alert(`✅ Successfully registered and enrolled ${createdUsers.length} student(s)!`);
-      setShowAddStudentModal(false);
-      setNewStudents([{ full_name: '', email: '', phone: '', gender: 'prefer_not_to_say', nationality: '', date_of_birth: '', educational_background: '', emergency_contact: '', emergency_phone: '', availabilitySlots: [] }]);
-      loadDetails();
-
-    } catch (error: any) {
-      console.error('Bulk Registration Error:', error);
-      alert('Error: ' + error.message);
-    } finally {
-      setSubmittingStudents(false);
-    }
-  };
-
   const handleUnenrollStudent = async (enrollmentId: string) => {
     if (!confirm('Are you sure you want to remove this student from the class? (The student account will NOT be deleted).')) return;
 
@@ -476,11 +261,11 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
   };
 
   // ==========================================================
-  // STATUS & UI HELPERS
+  // STATUS HELPERS
   // ==========================================================
   const updateStatus = async (newStatus: string) => {
     if (!classData) return;
-    
+
     try {
       const { error } = await supabase
         .from('classes')
@@ -500,12 +285,12 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
 
   const handleDelete = async () => {
     if (!classData) return;
-    
+
     if (confirm('Delete this class and all associated data? This action cannot be undone.')) {
       try {
         await supabase.from('class_options').delete().eq('class_id', classData.id);
         await supabase.from('inquiry_availability').delete().eq('class_id', classData.id);
-        
+
         const { error } = await supabase
           .from('classes')
           .delete()
@@ -523,6 +308,9 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
     }
   };
 
+  // ==========================================================
+  // FINALIZE
+  // ==========================================================
   const handleFinalize = async () => {
     if (!classData) return;
 
@@ -543,36 +331,55 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
       }
 
       for (const opt of options) {
+        const optStart = new Date(opt.start_time);
+        const optEnd = new Date(opt.end_time);
+
         const { data: teacherConflicts, error: teacherError } = await supabase
           .from('bookings')
           .select('*')
           .eq('teacher_id', opt.teacher_id)
-          .eq('start_time', opt.start_time);
+          .gte('start_time', new Date(optStart.getTime() - 24 * 60 * 60 * 1000).toISOString())
+          .lte('start_time', new Date(optStart.getTime() + 24 * 60 * 60 * 1000).toISOString())
+          .in('status', ['confirmed', 'in_progress', 'pending']);
 
         if (teacherError) {
           alert('Failed to check teacher conflicts: ' + teacherError.message);
           return;
         }
 
-        if (teacherConflicts && teacherConflicts.length > 0) {
-          alert(`Conflict detected! Teacher is already booked for ${opt.start_time}`);
-          return;
+        if (teacherConflicts) {
+          for (const booking of teacherConflicts) {
+            const bookingStart = new Date(booking.start_time);
+            const bookingEnd = new Date(booking.end_time);
+            if (optStart < bookingEnd && optEnd > bookingStart) {
+              alert(`Conflict detected! Teacher is already booked for ${bookingStart.toLocaleString()}`);
+              return;
+            }
+          }
         }
 
         const { data: roomConflicts, error: roomError } = await supabase
           .from('bookings')
           .select('*')
           .eq('room_id', opt.room_id)
-          .eq('start_time', opt.start_time);
+          .gte('start_time', new Date(optStart.getTime() - 24 * 60 * 60 * 1000).toISOString())
+          .lte('start_time', new Date(optStart.getTime() + 24 * 60 * 60 * 1000).toISOString())
+          .in('status', ['confirmed', 'in_progress', 'pending']);
 
         if (roomError) {
           alert('Failed to check room conflicts: ' + roomError.message);
           return;
         }
 
-        if (roomConflicts && roomConflicts.length > 0) {
-          alert(`Conflict detected! Room is already booked for ${opt.start_time}`);
-          return;
+        if (roomConflicts) {
+          for (const booking of roomConflicts) {
+            const bookingStart = new Date(booking.start_time);
+            const bookingEnd = new Date(booking.end_time);
+            if (optStart < bookingEnd && optEnd > bookingStart) {
+              alert(`Conflict detected! Room is already booked for ${bookingStart.toLocaleString()}`);
+              return;
+            }
+          }
         }
       }
 
@@ -593,13 +400,12 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
         start_time: opt.start_time,
         end_time: opt.end_time,
         status: 'confirmed',
-        class_id: classData.id
+        class_id: classData.id,
       }));
 
-      const { data: bookingData, error: bookingError } = await supabase
+      const { error: bookingError } = await supabase
         .from('bookings')
-        .insert(bookingInserts)
-        .select();
+        .insert(bookingInserts);
 
       if (bookingError) {
         console.error('Booking insert error:', bookingError);
@@ -609,7 +415,6 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
       }
 
       router.push('/dashboard/classes/management');
-
     } catch (err: any) {
       console.error('Error finalizing class:', err);
       alert('Error finalizing class: ' + err.message);
@@ -618,29 +423,38 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
 
   const getStatusDisplay = (status: string) => {
     const statusMap: { [key: string]: string } = {
-      'draft': 'Draft',
-      'pending_admin': 'Pending Admin Approval',
-      'pending_student': 'Pending Student Approval',
-      'pending_enrollment': 'Pending Enrollment',
-      'active': 'Active',
-      'cancelled': 'Cancelled'
+      draft: 'Draft',
+      pending_admin: 'Pending Admin Approval',
+      pending_student: 'Pending Student Approval',
+      pending_enrollment: 'Pending Enrollment',
+      active: 'Active',
+      cancelled: 'Cancelled',
     };
     return statusMap[status] || status;
   };
 
   const getStatusColor = (status: string) => {
     const colorMap: { [key: string]: string } = {
-      'draft': 'text-gray-600',
-      'pending_admin': 'text-blue-600',
-      'pending_student': 'text-yellow-600',
-      'pending_enrollment': 'text-purple-600',
-      'active': 'text-green-600',
-      'cancelled': 'text-red-600'
+      draft: 'text-gray-600',
+      pending_admin: 'text-blue-600',
+      pending_student: 'text-yellow-600',
+      pending_enrollment: 'text-purple-600',
+      active: 'text-green-600',
+      cancelled: 'text-red-600',
     };
     return colorMap[status] || 'text-gray-600';
   };
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
+  // ==========================================================
+  // RENDER
+  // ==========================================================
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   if (notFound) {
     return (
@@ -660,10 +474,15 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <Link href="/dashboard/classes/management" className="text-blue-600 hover:underline text-sm mb-2 inline-block">← Back to Management</Link>
+          <Link
+            href="/dashboard/classes/management"
+            className="text-blue-600 hover:underline text-sm mb-2 inline-block"
+          >
+            ← Back to Management
+          </Link>
           <h1 className="text-2xl font-bold text-gray-900">📋 Class Details</h1>
         </div>
-        <button 
+        <button
           onClick={() => setShowAddStudentModal(true)}
           className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-sm flex items-center gap-2"
         >
@@ -673,17 +492,99 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
 
       <div className="bg-white shadow rounded-lg p-6 space-y-6 border border-gray-200">
         <div className="grid grid-cols-2 gap-4 text-sm">
-          <div><span className="text-gray-500">Status:</span> <span className={`font-bold capitalize ${getStatusColor(classData.status)}`}>{getStatusDisplay(classData.status)}</span></div>
-          <div><span className="text-gray-500">Class Code:</span> <span className="font-bold">{classData.class_code || 'N/A'}</span></div>
-          <div><span className="text-gray-500">Course:</span> <span className="font-medium">{courseName || 'N/A'}</span></div>
-          <div><span className="text-gray-500">Teacher:</span> <span className="font-medium">{teacherName || 'Not Assigned'}</span></div>
-          <div><span className="text-gray-500">Room:</span> <span className="font-medium">{roomName || 'Not Assigned'}</span></div>
-          <div><span className="text-gray-500">Level:</span> <span className="font-medium">{courseLevel || 'N/A'}</span></div>
-          <div><span className="text-gray-500">Max Students:</span> <span className="font-medium">{classData.max_students}</span></div>
-          <div><span className="text-gray-500">Total Sessions:</span> <span className="font-medium">{classData.total_sessions}</span></div>
-          <div><span className="text-gray-500">Start Date:</span> <span className="font-medium">{classData.requested_start_date || 'N/A'}</span></div>
-          <div><span className="text-gray-500">Duration:</span> <span className="font-medium">{classData.requested_duration_days || 'N/A'} days</span></div>
+          <div>
+            <span className="text-gray-500">Status:</span>{' '}
+            <span className={`font-bold capitalize ${getStatusColor(classData.status)}`}>
+              {getStatusDisplay(classData.status)}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-500">Class Code:</span>{' '}
+            <span className="font-bold">{classData.class_code || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Course:</span>{' '}
+            <span className="font-medium">{courseName || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Module:</span>{' '}
+            <span className="font-medium">{moduleTitle || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Level:</span>{' '}
+            <span className="font-medium">{moduleLevel || 'N/A'}</span>
+          </div>
+
+          {/* ⭐ v3.9: Teacher with contact info */}
+          <div className="col-span-2">
+            <span className="text-gray-500">Teacher:</span>
+            {teacherContact ? (
+              <div className="mt-0.5">
+                <TeacherContactInfo
+                  fullName={teacherContact.full_name}
+                  phone={teacherContact.phone}
+                  email={teacherContact.email}
+                  teacherType={teacherContact.teacher_type}
+                />
+              </div>
+            ) : (
+              <span className="font-medium ml-1">Not Assigned</span>
+            )}
+          </div>
+
+          <div>
+            <span className="text-gray-500">Max Students:</span>{' '}
+            <span className="font-medium">{classData.max_students}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Total Sessions:</span>{' '}
+            <span className="font-medium">{classData.total_sessions}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Start Date:</span>{' '}
+            <span className="font-medium">{startDate || classData.start_date || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">End Date:</span>{' '}
+            <span className="font-medium">{endDate || classData.end_date || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Duration:</span>{' '}
+            <span className="font-medium">
+              {startDate && endDate
+                ? `${Math.ceil(
+                    (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+                      (1000 * 60 * 60 * 24)
+                  )} days`
+                : 'N/A'}
+            </span>
+          </div>
         </div>
+
+        {/* Module Sessions */}
+        {moduleSessions.length > 0 && (
+          <div className="border-t pt-4">
+            <h3 className="font-semibold text-gray-700 mb-2">📚 Module Classes</h3>
+            <div className="flex flex-wrap gap-2">
+              {moduleSessions.map((session) => (
+                <span
+                  key={session.id}
+                  className={`px-3 py-1.5 text-xs rounded-full border ${
+                    session.lesson_type === 'Lecture'
+                      ? 'bg-blue-100 border-blue-200 text-blue-700'
+                      : session.lesson_type === 'Practice'
+                      ? 'bg-green-100 border-green-200 text-green-700'
+                      : session.lesson_type === 'Lab'
+                      ? 'bg-orange-100 border-orange-200 text-orange-700'
+                      : 'bg-red-100 border-red-200 text-red-700'
+                  }`}
+                >
+                  {session.session_number}. {session.session_name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {inquiryPreferences.length > 0 && (
           <div className="border-t pt-4">
@@ -691,8 +592,7 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
             <div className="grid grid-cols-2 gap-2 text-sm">
               {inquiryPreferences.map((pref, idx) => (
                 <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200">
-                  <span className="font-medium">Day {pref.day_of_week}:</span> 
-                  {pref.start_time} - {pref.end_time}
+                  <span className="font-medium">Day {pref.day_of_week}:</span> {pref.start_time} - {pref.end_time}
                 </div>
               ))}
             </div>
@@ -706,29 +606,66 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Session</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date & Time</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Room</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teacher</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Session
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date & Time
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Room
+                    </th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Teacher
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {lockedSchedules.map((s, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-sm font-medium text-gray-900">Session {idx + 1}</td>
-                      <td className="px-4 py-2 text-sm text-gray-600">
-                        {new Date(s.start_time).toLocaleString()} - {new Date(s.end_time).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2 text-sm">
-                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
-                          {s.room_name || roomName || 'Not Assigned'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-600">
-                        {s.teacher_name || teacherName || 'Not Assigned'}
-                      </td>
-                    </tr>
-                  ))}
+                  {lockedSchedules.map((s, idx) => {
+                    const hasSubstitute = !!s.substitute_teacher_name;
+                    return (
+                      <tr
+                        key={idx}
+                        className={`hover:bg-gray-50 ${
+                          hasSubstitute ? 'bg-emerald-50/40' : ''
+                        }`}
+                      >
+                        <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                          Session {idx + 1}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-600">
+                          {new Date(s.start_time).toLocaleString()} -{' '}
+                          {new Date(s.end_time).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                            {s.room_name || 'Not Assigned'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          {hasSubstitute ? (
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-emerald-700">
+                                  👨‍🏫 {s.substitute_teacher_name}
+                                </span>
+                                <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] rounded-full font-semibold">
+                                  🔄 SUB
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-gray-400 line-through">
+                                {s.teacher_name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-600">
+                              {s.teacher_name || 'Not Assigned'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -737,148 +674,122 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
 
         <div className="flex flex-wrap gap-3 border-t pt-4">
           {classData.status === 'draft' && (
-            <Link href={`/dashboard/classes/inquire/results?${new URLSearchParams({ courseId: classData.course_id, packageId: classData.package_id || '', maxStudents: classData.max_students.toString(), startDate: classData.requested_start_date || '', duration: classData.requested_duration_days?.toString() || '30', availabilities: JSON.stringify(inquiryPreferences) }).toString()}`}>
-              <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">View Ranking Options</button>
+            <Link
+              href={`/dashboard/classes/inquire/results?${new URLSearchParams({
+                courseId: classData.course_id,
+                moduleId: classData.module_id || '',
+                packageId: classData.package_id || '',
+                maxStudents: classData.max_students.toString(),
+                startDate: classData.requested_start_date || '',
+                duration: classData.requested_duration_days?.toString() || '30',
+                availabilities: JSON.stringify(inquiryPreferences),
+              }).toString()}`}
+            >
+              <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                View Ranking Options
+              </button>
             </Link>
           )}
           {classData.status === 'pending_admin' && (
-            <button onClick={() => updateStatus('pending_student')} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Submit for Student Approval</button>
+            <button
+              onClick={() => updateStatus('pending_student')}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Submit for Student Approval
+            </button>
           )}
           {classData.status === 'pending_student' && (
             <>
-              <button onClick={() => updateStatus('pending_enrollment')} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Student Confirmed</button>
-              <button onClick={() => updateStatus('cancelled')} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">Cancel (Student Rejected)</button>
+              <button
+                onClick={() => updateStatus('pending_enrollment')}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              >
+                Student Confirmed
+              </button>
+              <button
+                onClick={() => updateStatus('cancelled')}
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                Cancel (Student Rejected)
+              </button>
             </>
           )}
           {classData.status === 'pending_enrollment' && (
-            <button onClick={handleFinalize} className="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800">Confirm & Enroll (Lock Calendar)</button>
+            <button
+              onClick={handleFinalize}
+              className="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800"
+            >
+              Confirm & Enroll (Lock Calendar)
+            </button>
           )}
-          {classData.status === 'active' && <div className="text-sm text-green-600 bg-green-50 px-4 py-2 rounded border border-green-200">✅ Class is active and scheduled</div>}
-          {classData.status === 'cancelled' && <div className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded border border-red-200">❌ Class has been cancelled</div>}
-          <button onClick={handleDelete} className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200">Delete Class</button>
+          {classData.status === 'active' && (
+            <div className="text-sm text-green-600 bg-green-50 px-4 py-2 rounded border border-green-200">
+              ✅ Class is active and scheduled
+            </div>
+          )}
+          {classData.status === 'cancelled' && (
+            <div className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded border border-red-200">
+              ❌ Class has been cancelled
+            </div>
+          )}
+          <button
+            onClick={handleDelete}
+            className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200"
+          >
+            Delete Class
+          </button>
         </div>
       </div>
 
       {/* ENROLLED STUDENTS */}
       <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mt-8">
-        <h3 className="font-bold text-gray-800 mb-4">👨‍🎓 Enrolled Students ({enrolledStudents.length})</h3>
-        {enrolledStudents.length === 0 ? <p className="text-gray-500 text-center py-4">No students enrolled yet. Click <strong>"Add Students"</strong> above to get started.</p> : (
+        <h3 className="font-bold text-gray-800 mb-4">
+          👨‍🎓 Enrolled Students ({enrolledStudents.length})
+        </h3>
+        {enrolledStudents.length === 0 ? (
+          <p className="text-gray-500 text-center py-4">
+            No students enrolled yet. Click <strong>"Add Students"</strong> above to get started.
+          </p>
+        ) : (
           <div className="space-y-2">
             {enrolledStudents.map((enrollment) => (
-              <div key={enrollment.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-200">
+              <div
+                key={enrollment.id}
+                className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-200"
+              >
                 <div>
-                  <span className="font-medium text-gray-800">{enrollment.student?.full_name || 'Unknown Student'}</span>
-                  <span className="ml-4 text-sm text-gray-500">{enrollment.student?.email || ''}</span>
+                  <span className="font-medium text-gray-800">
+                    {enrollment.student?.full_name || 'Unknown Student'}
+                  </span>
+                  <span className="ml-4 text-sm text-gray-500">
+                    {enrollment.student?.email || ''}
+                  </span>
                 </div>
-                <button onClick={() => handleUnenrollStudent(enrollment.id)} className="text-xs text-red-500 hover:text-red-700 font-medium">✕ Remove</button>
+                <button
+                  onClick={() => handleUnenrollStudent(enrollment.id)}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium"
+                >
+                  ✕ Remove
+                </button>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* GROUP REGISTRATION MODAL */}
-      {showAddStudentModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50 shrink-0">
-              <div><h2 className="text-xl font-bold text-gray-900">Enroll Students</h2><p className="text-sm text-gray-500">Add new or existing students to this class.</p></div>
-              <button onClick={() => setShowAddStudentModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">✕</button>
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
-              <div className="flex gap-4 bg-white p-1 rounded-lg border border-gray-200 shadow-sm mb-6">
-                <button onClick={() => setModalMode('new')} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${modalMode === 'new' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'}`}>➕ New Students</button>
-                <button onClick={() => setModalMode('existing')} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${modalMode === 'existing' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'}`}>👤 Existing Students</button>
-              </div>
-
-              {modalMode === 'new' && (
-                <div className="space-y-6">
-                  {newStudents.map((student, index) => (
-                    <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 relative">
-                      <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-100">
-                        <span className="font-bold text-gray-700 text-sm uppercase tracking-wider">Student #{index + 1}</span>
-                        <button onClick={() => removeStudentRow(index)} className="text-red-500 hover:text-red-700 text-sm font-medium" disabled={newStudents.length <= 1}>✕ Remove</button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div className="md:col-span-2"><label className="block text-xs font-medium text-gray-500 mb-1">Full Name *</label><input type="text" value={student.full_name} onChange={(e) => updateStudentRow(index, 'full_name', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Enter student's full name" /></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Email *</label><input type="email" value={student.email} onChange={(e) => updateStudentRow(index, 'email', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="student@email.com" /></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Phone</label><input type="text" value={student.phone} onChange={(e) => updateStudentRow(index, 'phone', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="+1234567890" /></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Gender</label><select value={student.gender} onChange={(e) => updateStudentRow(index, 'gender', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="prefer_not_to_say">Prefer not to say</option>{GENDERS.filter(g => g !== 'prefer_not_to_say').map(g => <option key={g} value={g}>{g}</option>)}</select></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Nationality</label><select value={student.nationality} onChange={(e) => updateStudentRow(index, 'nationality', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="">Select</option>{NATIONALITIES.map(n => <option key={n} value={n}>{n}</option>)}</select></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Date of Birth</label><input type="date" value={student.date_of_birth} onChange={(e) => updateStudentRow(index, 'date_of_birth', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" /></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Education</label><select value={student.educational_background} onChange={(e) => updateStudentRow(index, 'educational_background', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="">Select</option>{EDUCATION_LEVELS.map(e => <option key={e} value={e}>{e}</option>)}</select></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Emergency Contact</label><input type="text" value={student.emergency_contact} onChange={(e) => updateStudentRow(index, 'emergency_contact', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Name" /></div>
-                        <div><label className="block text-xs font-medium text-gray-500 mb-1">Emergency Phone</label><input type="text" value={student.emergency_phone} onChange={(e) => updateStudentRow(index, 'emergency_phone', e.target.value)} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Phone number" /></div>
-                      </div>
-
-                      <div className="border-t pt-4 mt-2">
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-sm font-medium text-gray-700">📅 Availability Preferences</span>
-                          <div className="flex gap-2">
-                            <button onClick={() => {
-                              const days = [1, 2, 3, 4, 5];
-                              applyBulkAvailability(days, '09:00', '17:00');
-                            }} className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded">Bulk Apply</button>
-                          </div>
-                        </div>
-                        {student.availabilitySlots.length > 0 ? (
-                          <div className="space-y-1">
-                            {student.availabilitySlots.map((slot: any, slotIdx: number) => (
-                              <div key={slotIdx} className="flex justify-between items-center bg-gray-50 p-2 rounded text-sm">
-                                <span>Day {slot.day_of_week}: {slot.start_time} - {slot.end_time}</span>
-                                <button onClick={() => removeAvailabilitySlotFromRow(index, slotIdx)} className="text-red-500 hover:text-red-700 text-xs">✕</button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : <p className="text-xs text-gray-500">No availability set. Click "Bulk Apply" to add.</p>}
-                      </div>
-                    </div>
-                  ))}
-
-                  <button onClick={addStudentRow} className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-600 transition text-sm font-medium">➕ Add Another Student</button>
-
-                  <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-                    <button onClick={() => setShowAddStudentModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 border rounded-md">Cancel</button>
-                    <button onClick={handleBulkRegister} disabled={submittingStudents} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium">
-                      {submittingStudents ? 'Registering...' : 'Register & Enroll All'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {modalMode === 'existing' && (
-                <div>
-                  <div className="flex gap-3 mb-4">
-                    <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Search by student name..." />
-                    <button onClick={searchExistingStudents} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">Search</button>
-                  </div>
-
-                  {searchResults.length > 0 && (
-                    <div className="space-y-2 mb-4 max-h-60 overflow-y-auto border rounded-md p-2">
-                      {searchResults.map(student => (
-                        <div key={student.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer" onClick={() => toggleExistingSelection(student.id)}>
-                          <input type="checkbox" checked={selectedExistingIds.includes(student.id)} onChange={() => {}} className="w-4 h-4" />
-                          <span className="font-medium">{student.full_name}</span>
-                          <span className="text-sm text-gray-500">{student.email}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-                    <button onClick={() => setShowAddStudentModal(false)} className="px-4 py-2 text-gray-600 hover:text-gray-800 border rounded-md">Cancel</button>
-                    <button onClick={enrollExistingStudents} disabled={submittingStudents || selectedExistingIds.length === 0} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium">
-                      {submittingStudents ? 'Enrolling...' : `Enroll Selected (${selectedExistingIds.length})`}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <EnrollStudentsModal
+        isOpen={showAddStudentModal}
+        onClose={() => setShowAddStudentModal(false)}
+        onSuccess={loadDetails}
+        classContext={{
+          type: 'private',
+          classId: classData.id,
+          className: classData.class_code,
+          courseName: courseName,
+          scheduleSlots: lockedSchedules,
+        }}
+        defaultTab="new"
+      />
     </div>
   );
 }

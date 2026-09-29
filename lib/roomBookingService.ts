@@ -1,3 +1,5 @@
+// lib/roomBookingService.ts
+
 import { supabase } from './supabaseClient';
 
 export type BookingType = 'trial_lesson' | 'event' | 'meeting' | 'activity';
@@ -182,7 +184,7 @@ export class RoomBookingService {
 
     if (error) throw error;
 
-    // Send notification
+    // Send notification (non-blocking)
     await this.sendNotification(data.id);
 
     return data;
@@ -225,17 +227,49 @@ export class RoomBookingService {
     return true;
   }
 
-  // Send notification (calls API route)
+  // ✅ FIXED: Send notification with proper error handling
   private static async sendNotification(bookingId: string) {
     try {
       // Call the edge function directly for room booking notification
       const edgeUrl = `https://rrealtsrnktaragpuyae.supabase.co/functions/v1/class-guardian?action=room_booking&bookingId=${bookingId}`;
       console.log('📤 Sending room booking notification to:', edgeUrl);
-      const response = await fetch(edgeUrl, { method: 'GET' });
-      const result = await response.json();
-      console.log('📥 Room booking notification response:', result);
+      
+      // Add timeout to prevent long waiting
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
+      try {
+        const response = await fetch(edgeUrl, { 
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log('📥 Room booking notification response:', result);
+        } else {
+          console.warn(`⚠️ Notification failed with status: ${response.status}`);
+          // Don't throw - this is non-critical
+        }
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        
+        if (fetchError.name === 'AbortError') {
+          console.warn('⏱️ Notification timeout - continuing');
+        } else if (fetchError.message === 'Failed to fetch') {
+          console.warn('⚠️ Edge function not available - continuing');
+        } else {
+          console.warn('⚠️ Could not send room booking notification:', fetchError.message);
+        }
+        // Don't re-throw - notification failure shouldn't break the booking
+      }
     } catch (error) {
-      console.error('❌ Failed to send room booking notification:', error);
+      console.warn('⚠️ Could not send room booking notification:', error);
+      // Don't re-throw - this is non-critical
     }
   }
 }

@@ -1,0 +1,55 @@
+Unused files (16)
+components/BackButton.tsx                                    
+components/forgot-password-form.tsx                          
+components/hero.tsx                                          
+components/next-logo.tsx                                     
+components/RoomBookingForm.tsx                               
+components/RoomConflictModal.tsx                             
+components/supabase-logo.tsx                                 
+components/tutorial/connect-supabase-steps.tsx               
+components/tutorial/sign-up-user-steps.tsx                   
+lib/roomBookingService.ts                                    
+lib/supabase.ts                                              
+lib/supabaseServer.ts                                        
+lib/teacher-matching.ts                                      
+route.ts                                                     
+supabase/functions/supabase/functions/class-guardian/index.ts
+supabase/functions/supabase/functions/class-monitor/index.ts 
+Unused devDependencies (1)
+eslint-config-next  package.json:34:6
+Unlisted dependencies (3)
+@supabase/auth-helpers-nextjs  app/auth/callback/route.ts:2:42       
+@supabase/auth-helpers-nextjs  app/auth/forgot-password/page.tsx:5:45
+postcss-load-config            postcss.config.mjs:1:10               
+Unused exports (24)
+badgeVariants                         components/ui/badge.tsx:36:17        
+buttonVariants                        components/ui/button.tsx:57:18       
+CardFooter                            components/ui/card.tsx:79:3          
+DropdownMenuItem                      components/ui/dropdown-menu.tsx:189:3
+DropdownMenuCheckboxItem              components/ui/dropdown-menu.tsx:190:3
+DropdownMenuLabel                     components/ui/dropdown-menu.tsx:192:3
+DropdownMenuSeparator                 components/ui/dropdown-menu.tsx:193:3
+DropdownMenuShortcut                  components/ui/dropdown-menu.tsx:194:3
+DropdownMenuGroup                     components/ui/dropdown-menu.tsx:195:3
+DropdownMenuPortal                    components/ui/dropdown-menu.tsx:196:3
+DropdownMenuSub                       components/ui/dropdown-menu.tsx:197:3
+DropdownMenuSubContent                components/ui/dropdown-menu.tsx:198:3
+DropdownMenuSubTrigger                components/ui/dropdown-menu.tsx:199:3
+checkTeacherConflicts       function  lib/roomConflictChecker.ts:373:23    
+checkAllConflicts           function  lib/roomConflictChecker.ts:553:23    
+createSubstituteAssignment  function  lib/substituteService.ts:61:23       
+cancelSubstituteAssignment  function  lib/substituteService.ts:134:23      
+clearSessionAttention       function  lib/substituteService.ts:178:23      
+extractDate                 function  lib/timeUtils.ts:10:17               
+extractTime                 function  lib/timeUtils.ts:22:17               
+addMinutesToTime            function  lib/timeUtils.ts:44:17               
+addHoursToTime              function  lib/timeUtils.ts:55:17               
+computeEndTime              function  lib/timeUtils.ts:62:17               
+parseLocalDate              function  lib/timeUtils.ts:82:17               
+Unused exported types (6)
+TrialRecord                 interface  app/dashboard/classes/book/types/index.ts:92:18
+BadgeProps                  interface  components/ui/badge.tsx:26:18                  
+ButtonProps                 interface  components/ui/button.tsx:37:18                 
+ConflictType                type       lib/conflictDetectionService.ts:6:13           
+ConflictType                type       lib/roomConflictChecker.ts:5:13                
+TeacherConflictCheckParams  interface  lib/roomConflictChecker.ts:53:18               

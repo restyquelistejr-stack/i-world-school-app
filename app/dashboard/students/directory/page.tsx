@@ -1,3 +1,5 @@
+//app/dashboard/students/directory/page.tsx
+
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -167,7 +169,7 @@ export default function ManageStudents() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap flex gap-2">
                         {/* ✅ NEW: View Button */}
-                        <Link href={`/dashboard/students/${student.id}`}>
+                          <Link href={`/dashboard/students/view?id=${student.id}`}>
                           <button className="text-gray-600 hover:text-gray-800 text-sm font-medium border border-gray-300 px-3 py-1 rounded hover:bg-gray-50">
                             View
                           </button>

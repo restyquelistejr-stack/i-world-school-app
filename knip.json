@@ -1,0 +1,40 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "app/**/page.tsx",
+    "app/**/layout.tsx",
+    "app/**/route.ts",
+    "app/**/loading.tsx",
+    "app/**/error.tsx",
+    "app/**/not-found.tsx",
+    "app/**/template.tsx",
+    "app/**/default.tsx",
+    "middleware.ts",
+    "next.config.{js,ts,mjs}",
+    "tailwind.config.{js,ts}",
+    "postcss.config.{js,ts,mjs}",
+    "eslint.config.{js,mjs}"
+  ],
+  "project": [
+    "app/**/*.{ts,tsx}",
+    "components/**/*.{ts,tsx}",
+    "lib/**/*.{ts,tsx}",
+    "hooks/**/*.{ts,tsx}"
+  ],
+  "ignore": [
+    "**/*.test.{ts,tsx}",
+    "**/*.spec.{ts,tsx}",
+    "supabase/functions/**",
+    ".next/**",
+    "node_modules/**"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss",
+    "postcss",
+    "autoprefixer",
+    "eslint-config-next",
+    "@types/*"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": ["next", "eslint", "tsc"]
+}

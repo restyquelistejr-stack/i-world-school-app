@@ -8,8 +8,14 @@ import Link from 'next/link';
 interface Course {
   id: string;
   name: string;
-  level: string;
   duration_hours: number;
+}
+
+interface Module {
+  id: string;
+  title: string;
+  level: string;
+  total_sessions: number;
 }
 
 interface Package {
@@ -20,23 +26,17 @@ interface Package {
   course_id: string | null;
 }
 
-interface Module {
-  id: string;
-  level: string | null;
-  title: string;
-}
-
 export default function InquireClassPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [courses, setCourses] = useState<Course[]>([]);
-  const [packages, setPackages] = useState<Package[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
+  const [packages, setPackages] = useState<Package[]>([]);
   
   const [selectedCourseId, setSelectedCourseId] = useState('');
-  const [selectedLevel, setSelectedLevel] = useState('');
+  const [selectedModuleId, setSelectedModuleId] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState('');
   
   const [maxStudents, setMaxStudents] = useState(1);
@@ -46,6 +46,11 @@ export default function InquireClassPage() {
   const [hoursPerSession, setHoursPerSession] = useState(2);
   const [totalSessions, setTotalSessions] = useState(20);
   const [isFlexibleMode, setIsFlexibleMode] = useState(false);
+  
+  // Teacher selection: can select one or more
+  const [selectedTeachers, setSelectedTeachers] = useState<string[]>([]);
+  const [availableTeachers, setAvailableTeachers] = useState<any[]>([]);
+  const [showTeacherSelection, setShowTeacherSelection] = useState(false);
 
   const [availabilities, setAvailabilities] = useState([
     { day_of_week: 1, start_time: '09:00', end_time: '17:00' }
@@ -61,7 +66,9 @@ export default function InquireClassPage() {
     { value: 0, label: 'Sunday' },
   ];
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    loadData(); 
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -74,35 +81,28 @@ export default function InquireClassPage() {
     setLoading(false);
   }
 
-  const resetForm = () => {
-    setSelectedCourseId('');
-    setSelectedLevel('');
-    setSelectedPackageId('');
-    setMaxStudents(1);
-    setRequestedStartDate('');
-    setRequestedDuration(30);
-    setAvailabilities([{ day_of_week: 1, start_time: '09:00', end_time: '17:00' }]);
-    setHoursPerSession(2);
-    setTotalSessions(20);
-    setIsFlexibleMode(false);
-    setPackages([]);
-    setModules([]);
-  };
-
-  // 1. When course changes: Load Packages AND Modules (for Levels)
+  // When course changes: Load modules and packages
   useEffect(() => {
     if (!selectedCourseId) {
-      setPackages([]);
       setModules([]);
-      setSelectedLevel('');
+      setPackages([]);
+      setSelectedModuleId('');
       setSelectedPackageId('');
       return;
     }
-    loadPackagesAndModules();
+    loadModulesAndPackages();
     updateSessionConfigFromCourse();
   }, [selectedCourseId]);
 
-  async function loadPackagesAndModules() {
+  async function loadModulesAndPackages() {
+    // Fetch Modules
+    const { data: modulesData } = await supabase
+      .from('course_modules')
+      .select('id, title, level, total_sessions')
+      .eq('course_id', selectedCourseId)
+      .order('module_order', { ascending: true });
+    setModules(modulesData || []);
+
     // Fetch Packages
     const { data: packagesData } = await supabase
       .from('course_packages')
@@ -111,14 +111,6 @@ export default function InquireClassPage() {
       .or(`course_id.eq.${selectedCourseId},course_id.is.null`)
       .order('sessions');
     setPackages(packagesData || []);
-
-    // Fetch Modules (to get the Levels)
-    const { data: modulesData } = await supabase
-      .from('course_modules')
-      .select('id, level, title')
-      .eq('course_id', selectedCourseId)
-      .order('module_order', { ascending: true });
-    setModules(modulesData || []);
   }
 
   async function updateSessionConfigFromCourse() {
@@ -131,15 +123,24 @@ export default function InquireClassPage() {
       .single();
     
     if (course) {
-      const defaultHoursPerSession = 2; // We default to 2
+      const defaultHoursPerSession = 2;
       const defaultSessions = Math.ceil(course.duration_hours / defaultHoursPerSession);
-      
       setHoursPerSession(defaultHoursPerSession);
       setTotalSessions(defaultSessions);
     }
   }
 
-  // 2. When Package changes: Update Sessions if standard is chosen
+  // When module changes: Update sessions
+  useEffect(() => {
+    if (selectedModuleId) {
+      const module = modules.find(m => m.id === selectedModuleId);
+      if (module && module.total_sessions) {
+        setTotalSessions(module.total_sessions);
+      }
+    }
+  }, [selectedModuleId, modules]);
+
+  // When package changes: Update sessions
   useEffect(() => {
     if (selectedPackageId) {
       const selectedPkg = packages.find(p => p.id === selectedPackageId);
@@ -147,10 +148,48 @@ export default function InquireClassPage() {
         setTotalSessions(selectedPkg.sessions);
         setIsFlexibleMode(false);
       }
-    } else {
+    } else if (selectedCourseId) {
       updateSessionConfigFromCourse();
     }
   }, [selectedPackageId, packages]);
+
+  // Load teachers when module is selected and teacher selection is enabled
+  useEffect(() => {
+    if (showTeacherSelection && selectedModuleId) {
+      loadAvailableTeachers();
+    }
+  }, [showTeacherSelection, selectedModuleId]);
+
+  async function loadAvailableTeachers() {
+    if (!selectedModuleId) return;
+
+    const { data: teacherModules } = await supabase
+      .from('teacher_modules')
+      .select('teacher_id')
+      .eq('module_id', selectedModuleId)
+      .eq('is_active', true);
+
+    if (!teacherModules || teacherModules.length === 0) return;
+
+    const teacherIds = teacherModules.map(t => t.teacher_id);
+    const { data: teachers } = await supabase
+      .from('users')
+      .select('id, full_name, email')
+      .eq('role', 'teacher')
+      .eq('is_active', true)
+      .in('id', teacherIds)
+      .order('full_name');
+
+    setAvailableTeachers(teachers || []);
+  }
+
+  const toggleTeacherSelection = (teacherId: string) => {
+    setSelectedTeachers(prev => 
+      prev.includes(teacherId) 
+        ? prev.filter(id => id !== teacherId) 
+        : [...prev, teacherId]
+    );
+  };
 
   const addAvailability = () => {
     setAvailabilities([...availabilities, { day_of_week: 1, start_time: '09:00', end_time: '17:00' }]);
@@ -173,15 +212,15 @@ export default function InquireClassPage() {
 
   const validateAvailabilities = () => {
     for (const avail of availabilities) {
-      const [startHour, startMinute] = avail.start_time.split(':').map(Number);
-      const [endHour, endMinute] = avail.end_time.split(':').map(Number);
+      const [startHour] = avail.start_time.split(':').map(Number);
+      const [endHour] = avail.end_time.split(':').map(Number);
       
-      if (startHour < 9 || (startHour === 9 && startMinute < 0) || endHour > 22) {
+      if (startHour < 9 || endHour > 22) {
         alert('School hours must be between 9:00 AM and 10:00 PM');
         return false;
       }
       
-      if (startHour > endHour || (startHour === endHour && startMinute >= endMinute)) {
+      if (startHour >= endHour) {
         alert('Start time must be before end time');
         return false;
       }
@@ -194,6 +233,11 @@ export default function InquireClassPage() {
     
     if (!selectedCourseId) { 
       alert('Please select a course.'); 
+      setSubmitting(false); 
+      return; 
+    }
+    if (!selectedModuleId) { 
+      alert('Please select a module.'); 
       setSubmitting(false); 
       return; 
     }
@@ -213,14 +257,12 @@ export default function InquireClassPage() {
     }
 
     const totalHours = totalSessions * hoursPerSession;
-
-    // 3. Calculate Standard Sessions from course duration for the Results page
     const course = courses.find(c => c.id === selectedCourseId);
     const standardSessions = course ? Math.ceil(course.duration_hours / 2) : 0;
 
     const params = new URLSearchParams({
       courseId: selectedCourseId,
-      selectedLevel: selectedLevel,
+      moduleId: selectedModuleId,
       packageId: selectedPackageId || '',
       maxStudents: maxStudents.toString(),
       startDate: requestedStartDate,
@@ -230,7 +272,8 @@ export default function InquireClassPage() {
       totalSessions: totalSessions.toString(),
       totalHours: totalHours.toString(),
       isFlexibleMode: isFlexibleMode.toString(),
-      standardSessions: standardSessions.toString(), // Pass to results
+      standardSessions: standardSessions.toString(),
+      selectedTeachers: JSON.stringify(selectedTeachers),
       _t: Date.now().toString() 
     });
 
@@ -239,7 +282,7 @@ export default function InquireClassPage() {
   }
 
   const totalCourseHours = totalSessions * hoursPerSession;
-  const course = courses.find(c => c.id === selectedCourseId);
+  const selectedModule = modules.find(m => m.id === selectedModuleId);
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
 
@@ -249,7 +292,7 @@ export default function InquireClassPage() {
         <Link href="/dashboard/classes/management">
           <button className="text-gray-600 hover:text-gray-900">← Back to Management</button>
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">📝 Inquire Class Details</h1>
+        <h1 className="text-2xl font-bold text-gray-900">📝 Register for Class</h1>
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 space-y-6 border border-gray-200">
@@ -267,23 +310,23 @@ export default function InquireClassPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Level</label>
+            <label className="block text-sm font-medium mb-1">Module / Level *</label>
             <select 
-              value={selectedLevel} 
-              onChange={(e) => setSelectedLevel(e.target.value)} 
+              value={selectedModuleId} 
+              onChange={(e) => setSelectedModuleId(e.target.value)} 
               className="w-full px-3 py-2 border rounded-lg bg-white"
               disabled={!selectedCourseId || modules.length === 0}
             >
-              <option value="">All Levels</option>
-              {/* ✅ FIX: Use String(level) to avoid TypeScript "null" error */}
-              {Array.from(new Set(modules.map(m => m.level).filter(Boolean))).map((level) => (
-                <option key={String(level)} value={String(level)}>{level}</option>
+              <option value="">Select a module...</option>
+              {modules.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.title} {m.level ? `(${m.level})` : ''} - {m.total_sessions || 0} sessions
+                </option>
               ))}
             </select>
-            {/* Show Module Title if Level Selected */}
-            {selectedLevel && (
+            {selectedModule && (
               <p className="text-xs text-gray-500 mt-1">
-                Info: {modules.find(m => m.level === selectedLevel)?.title || 'General'}
+                Level: {selectedModule.level || 'N/A'} • Sessions: {selectedModule.total_sessions || 0}
               </p>
             )}
           </div>
@@ -291,16 +334,15 @@ export default function InquireClassPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Package / Duration</label>
+            <label className="block text-sm font-medium mb-1">Package</label>
             <select 
               value={selectedPackageId} 
               onChange={(e) => setSelectedPackageId(e.target.value)} 
               className="w-full px-3 py-2 border rounded-lg bg-white"
               disabled={!selectedCourseId}
             >
-              {/* 4. Dynamic Standard Package based on course duration */}
               <option value="">
-                Standard ({totalSessions} sessions × {hoursPerSession}h) [Auto-calculated]
+                Standard ({totalSessions} sessions × {hoursPerSession}h)
               </option>
               {packages.map(p => (
                 <option key={p.id} value={p.id}>{p.name} ({p.sessions} sessions - ${p.amount})</option>
@@ -317,6 +359,57 @@ export default function InquireClassPage() {
               min="1" 
             />
           </div>
+        </div>
+
+        {/* Teacher Selection */}
+        <div className="border-t pt-4">
+          <div className="flex items-center gap-4 mb-3">
+            <input
+              type="checkbox"
+              id="selectTeachers"
+              checked={showTeacherSelection}
+              onChange={(e) => {
+                setShowTeacherSelection(e.target.checked);
+                if (!e.target.checked) setSelectedTeachers([]);
+              }}
+              className="w-4 h-4"
+            />
+            <label htmlFor="selectTeachers" className="text-sm font-medium text-gray-700">
+              Select specific teacher(s) for this class
+            </label>
+          </div>
+
+          {showTeacherSelection && (
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <p className="text-sm text-gray-600 mb-3">
+                Select one or more teachers for this class. If none selected, the system will find the best match.
+              </p>
+              {availableTeachers.length === 0 ? (
+                <p className="text-sm text-gray-500">No teachers available for this module. Please add teacher qualifications first.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {availableTeachers.map((teacher) => (
+                    <button
+                      key={teacher.id}
+                      type="button"
+                      onClick={() => toggleTeacherSelection(teacher.id)}
+                      className={`px-3 py-1.5 text-sm rounded-full transition ${
+                        selectedTeachers.includes(teacher.id)
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      {teacher.full_name}
+                      {selectedTeachers.includes(teacher.id) && ' ✓'}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedTeachers.length > 0 && (
+                <p className="text-xs text-gray-500 mt-2">Selected: {selectedTeachers.length} teacher(s)</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Session Configuration */}
@@ -339,9 +432,12 @@ export default function InquireClassPage() {
                 onChange={(e) => {
                   const val = parseFloat(e.target.value);
                   setHoursPerSession(val);
-                  if (course && isFlexibleMode) {
-                    const newSessions = Math.ceil(course.duration_hours / val);
-                    setTotalSessions(newSessions);
+                  if (selectedCourseId && isFlexibleMode) {
+                    const course = courses.find(c => c.id === selectedCourseId);
+                    if (course) {
+                      const newSessions = Math.ceil(course.duration_hours / val);
+                      setTotalSessions(newSessions);
+                    }
                   }
                 }}
                 className="w-full px-3 py-2 border rounded-lg bg-white"
@@ -370,7 +466,7 @@ export default function InquireClassPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Total Course Hours</label>
+              <label className="block text-sm font-medium mb-1">Total Hours</label>
               <div className="w-full px-3 py-2 bg-gray-50 border rounded-lg text-gray-700">
                 {totalCourseHours} hours
               </div>
@@ -391,7 +487,7 @@ export default function InquireClassPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Requested Duration (Days)</label>
+              <label className="block text-sm font-medium mb-1">Duration (Days)</label>
               <select 
                 value={requestedDuration} 
                 onChange={(e) => setRequestedDuration(parseInt(e.target.value))} 
@@ -432,7 +528,7 @@ export default function InquireClassPage() {
                   </select>
                 </div>
                 <div className="flex-1 min-w-[100px]">
-                  <label className="block text-xs text-gray-500 mb-1">Start (9:00 - 22:00)</label>
+                  <label className="block text-xs text-gray-500 mb-1">Start</label>
                   <input 
                     type="time" 
                     value={a.start_time} 
@@ -447,7 +543,7 @@ export default function InquireClassPage() {
                   />
                 </div>
                 <div className="flex-1 min-w-[100px]">
-                  <label className="block text-xs text-gray-500 mb-1">End (9:00 - 22:00)</label>
+                  <label className="block text-xs text-gray-500 mb-1">End</label>
                   <input 
                     type="time" 
                     value={a.end_time} 
@@ -470,7 +566,7 @@ export default function InquireClassPage() {
         <div className="flex justify-end pt-4 border-t">
           <button
             onClick={handleFindResources}
-            disabled={submitting || !selectedCourseId || !requestedStartDate || availabilities.length === 0}
+            disabled={submitting || !selectedCourseId || !selectedModuleId || !requestedStartDate || availabilities.length === 0}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
           >
             {submitting ? 'Scanning...' : '🔍 Find Available Resources'}

@@ -1,26 +1,42 @@
+// app/dashboard/staff/teachers/page.tsx
+// ⭐ v3.14: Soft delete + status buckets + archive (no more hard delete)
 'use client';
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
+import ArchiveConfirmModal from '@/components/ArchiveConfirmModal';
+import StatusFilterPills from '@/components/StatusFilterPills';
+import {
+  classifyPerson,
+  countBuckets,
+  filterByBuckets,
+  StatusBucket,
+} from '@/lib/filters/managementFilters';
+import { useStatusFilter } from '@/lib/hooks/useStatusFilter';
+import { archiveUser } from '@/lib/archiveService';
 
 interface Teacher {
   id: string;
   full_name: string;
   email: string;
+  phone: string;
   specialization: string;
-  profile_headline: string;
-  hourly_rate: number;
-  years_experience: number;
+  teacher_type: 'full-time' | 'part-time';
   is_active: boolean;
-  availability_count: number;
+  is_deleted?: boolean | null;
 }
 
 export default function TeachersPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // ⭐ v3.14: persistent status bucket filter — default: active only
+  const { active: activeBuckets, toggle: toggleBucket } = useStatusFilter(
+    'teachers.buckets',
+    ['active']
+  );
 
   useEffect(() => {
     loadTeachers();
@@ -29,129 +45,62 @@ export default function TeachersPage() {
   async function loadTeachers() {
     setLoading(true);
     try {
-      console.log('🔄 Loading teachers...');
-      
-      // 1. Get all teachers
-      const { data: teachersData, error: teachersError } = await supabase
-        .from('teachers')
-        .select('*')
-        .order('specialization');
-
-      if (teachersError) {
-        console.error('❌ Teachers error:', teachersError);
-        alert('Failed to load teachers: ' + teachersError.message);
-        setLoading(false);
-        return;
-      }
-
-      console.log('✅ Teachers loaded:', teachersData?.length || 0);
-
-      if (!teachersData || teachersData.length === 0) {
-        setTeachers([]);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Get user info for each teacher
-      const teacherIds = teachersData.map((t: any) => t.id);
+      // ⭐ v3.14: fetch users WITH is_deleted so we can classify
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('id, email, full_name')
-        .in('id', teacherIds);
+        .select('id, full_name, email, phone, is_active, is_deleted')
+        .eq('role', 'teacher')
+        .order('full_name');
 
-      if (usersError) {
-        console.error('❌ Users error:', usersError);
-      }
+      if (usersError) throw usersError;
 
-      const userMap: Record<string, any> = {};
-      (usersData || []).forEach((u: any) => {
-        userMap[u.id] = u;
+      // ⭐ v3.14: teacher profile table — don't filter is_active so we can
+      // still display archived/inactive teachers; we just won't show them in Active.
+      const { data: teachersData, error: teachersError } = await supabase
+        .from('teachers')
+        .select('*');
+
+      if (teachersError) throw teachersError;
+
+      const merged: Teacher[] = (usersData || []).map((user: any) => {
+        const teacher = (teachersData || []).find((t: any) => t.id === user.id);
+        return {
+          ...user,
+          specialization: teacher?.specialization || '',
+          teacher_type: teacher?.teacher_type || 'full-time',
+        };
       });
 
-      // 3. Get availability count for each teacher (ONE BY ONE)
-      const availabilityCounts: Record<string, number> = {};
-      for (const teacher of teachersData) {
-        const { count, error: countError } = await supabase
-          .from('teacher_availability')
-          .select('*', { count: 'exact', head: true })
-          .eq('teacher_id', teacher.id);
-
-        if (!countError) {
-          availabilityCounts[teacher.id] = count || 0;
-        } else {
-          console.error('Count error for teacher', teacher.id, countError);
-          availabilityCounts[teacher.id] = 0;
-        }
-      }
-
-      // 4. Merge all data
-      const mergedTeachers = teachersData.map((teacher: any) => ({
-        ...teacher,
-        email: userMap[teacher.id]?.email || 'No email',
-        full_name: userMap[teacher.id]?.full_name || 'Unknown',
-        availability_count: availabilityCounts[teacher.id] || 0,
-      }));
-
-      console.log('✅ Merged teachers:', mergedTeachers.length);
-      setTeachers(mergedTeachers);
-      
-    } catch (error: any) {
-      console.error('❌ Unexpected error:', error);
-      alert('Failed to load teachers: ' + error.message);
+      setTeachers(merged);
+    } catch (error) {
+      console.error('Error loading teachers:', error);
+      alert('Failed to load teachers');
     }
-    
     setLoading(false);
   }
 
-  async function toggleTeacherStatus(teacherId: string, currentStatus: boolean) {
-    try {
-      const { error } = await supabase
-        .from('teachers')
-        .update({ is_active: !currentStatus })
-        .eq('id', teacherId);
+  async function handleArchiveConfirm(reason: string) {
+    if (!archiveTarget) return;
 
-      if (error) throw error;
-      loadTeachers();
-    } catch (error: any) {
-      alert('Error: ' + error.message);
+    const res = await archiveUser(archiveTarget.id, {
+      reason,
+      actorRole: 'admin',
+    });
+
+    if (!res.success) {
+      alert('Failed to archive: ' + (res.error || 'Unknown error'));
+      return;
     }
+
+    setArchiveTarget(null);
+    await loadTeachers();
   }
 
-  async function deleteTeacher(teacherId: string) {
-    if (!confirm('Are you sure you want to delete this teacher?')) return;
-
-    try {
-      // Delete availability first
-      await supabase
-        .from('teacher_availability')
-        .delete()
-        .eq('teacher_id', teacherId);
-
-      // Delete teacher
-      const { error } = await supabase
-        .from('teachers')
-        .delete()
-        .eq('id', teacherId);
-
-      if (error) throw error;
-      loadTeachers();
-    } catch (error: any) {
-      alert('Error: ' + error.message);
-    }
-  }
-
-  const filteredTeachers = teachers.filter(teacher => {
-    const matchesSearch = 
-      teacher.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      teacher.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (teacher.specialization && teacher.specialization.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    const matchesFilter = filterStatus === 'all' || 
-      (filterStatus === 'active' && teacher.is_active) ||
-      (filterStatus === 'inactive' && !teacher.is_active);
-    
-    return matchesSearch && matchesFilter;
-  });
+  // ==========================================
+  // DERIVED: bucket classification + filtering
+  // ==========================================
+  const counts = countBuckets(teachers, classifyPerson);
+  const visibleTeachers = filterByBuckets(teachers, classifyPerson, activeBuckets);
 
   if (loading) {
     return (
@@ -162,116 +111,162 @@ export default function TeachersPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">👨‍🏫 Teachers</h1>
-          <p className="text-sm text-gray-500">Manage all teachers and their availability</p>
+          <p className="text-sm text-gray-500">
+            Manage all teachers in the system — archived and inactive teachers are hidden by default.
+          </p>
         </div>
         <Link href="/dashboard/staff/teachers/create">
-          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
-            + Add Teacher
+          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+            ➕ Add Teacher
           </button>
         </Link>
       </div>
 
-      {/* Search and Filters */}
-      <div className="flex flex-wrap gap-4 mb-6">
-        <div className="flex-1 min-w-[200px]">
-          <input
-            type="text"
-            placeholder="Search by name, email, or specialization..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="all">All Teachers</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
-        <button
-          onClick={loadTeachers}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
-        >
-          🔄 Refresh
-        </button>
+      {/* ⭐ v3.14: Status bucket filter */}
+      <div className="mb-4">
+        <StatusFilterPills
+          counts={counts}
+          active={activeBuckets}
+          onToggle={toggleBucket}
+          visibleBuckets={['active', 'cancelled', 'archived']}
+        />
       </div>
 
-      {/* Teacher Cards */}
-      {filteredTeachers.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <p className="text-gray-500">No teachers found. Add your first teacher!</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTeachers.map((teacher) => (
-            <div key={teacher.id} className="bg-white rounded-lg shadow border border-gray-100 hover:shadow-lg transition">
-              <div className="p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-bold text-gray-900">{teacher.full_name}</h3>
-                    <p className="text-sm text-gray-500">{teacher.email}</p>
-                  </div>
-                  <span className={`px-2 py-0.5 text-xs rounded-full ${
-                    teacher.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}>
-                    {teacher.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-
-                {teacher.specialization && (
-                  <div className="mt-2 text-sm text-gray-600">
-                    {teacher.specialization}
-                  </div>
-                )}
-
-                <div className="mt-3 flex items-center gap-4 text-sm text-gray-500">
-                  {teacher.hourly_rate > 0 && (
-                    <span>💰 ${teacher.hourly_rate}/hr</span>
+      {/* Table */}
+      <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Specialization</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {visibleTeachers.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                  No teachers match the current filter.
+                  {counts.active === 0 && counts.archived + counts.cancelled > 0 && (
+                    <span className="block mt-1 text-xs">
+                      Try enabling <strong>📦 Archived</strong> or <strong>🚫 Inactive</strong>.
+                    </span>
                   )}
-                  {teacher.years_experience > 0 && (
-                    <span>📅 {teacher.years_experience} years</span>
-                  )}
-                  <span>📅 {teacher.availability_count} slots</span>
-                </div>
+                </td>
+              </tr>
+            ) : (
+              visibleTeachers.map((teacher) => {
+                const bucket = classifyPerson(teacher);
+                const isArchived = bucket === 'archived';
+                const isInactive = bucket === 'cancelled'; // person classifier maps is_active=false → 'cancelled'
 
-                <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-2">
-                  <Link href={`/dashboard/staff/teachers/${teacher.id}`}>
-                    <button className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                      👤 Profile
-                    </button>
-                  </Link>
-                  <Link href={`/dashboard/staff/teachers/${teacher.id}/availability`}>
-                    <button className="text-sm text-green-600 hover:text-green-800 font-medium">
-                      📅 Availability
-                    </button>
-                  </Link>
-                  <button
-                    onClick={() => toggleTeacherStatus(teacher.id, teacher.is_active)}
-                    className={`text-sm font-medium ${
-                      teacher.is_active ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800'
+                return (
+                  <tr
+                    key={teacher.id}
+                    className={`transition-colors ${
+                      isArchived ? 'bg-amber-50/40 hover:bg-amber-50/80' :
+                      isInactive ? 'bg-gray-50/60 opacity-75 hover:bg-gray-100/60' :
+                      'hover:bg-gray-50'
                     }`}
                   >
-                    {teacher.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
-                  <button
-                    onClick={() => deleteTeacher(teacher.id)}
-                    className="text-sm text-red-600 hover:text-red-800 font-medium"
-                  >
-                    🗑️ Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                      <div className="flex items-center gap-2">
+                        <span>{teacher.full_name}</span>
+                        {isArchived && (
+                          <span className="px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded-full">
+                            📦 Archived
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{teacher.email}</td>
+                    <td className="px-4 py-3 text-sm">
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${
+                        teacher.teacher_type === 'full-time'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-orange-100 text-orange-800'
+                      }`}>
+                        {teacher.teacher_type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600">
+                      {teacher.specialization || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {isArchived ? (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-amber-100 text-amber-800">
+                          Archived
+                        </span>
+                      ) : teacher.is_active ? (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-800">
+                          Active
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-800">
+                          Inactive
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm">
+                      <div className="flex justify-end gap-2">
+                        <Link href={`/dashboard/staff/teachers/view?id=${teacher.id}`}>
+                          <button className="text-blue-600 hover:text-blue-800" title="View">
+                            👁️
+                          </button>
+                        </Link>
+                        <Link href={`/dashboard/staff/teachers/edit?id=${teacher.id}`}>
+                          <button className="text-green-600 hover:text-green-800" title="Edit">
+                            ✏️
+                          </button>
+                        </Link>
+                        {!isArchived && (
+                          <button
+                            onClick={() => setArchiveTarget({ id: teacher.id, name: teacher.full_name })}
+                            className="text-amber-600 hover:text-amber-800"
+                            title="Archive"
+                          >
+                            📦
+                          </button>
+                        )}
+                        {isArchived && (
+                          <span
+                            className="text-[10px] text-gray-400"
+                            title="Reactivate from the detail page"
+                          >
+                            📦 Archived
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ⭐ v3.14: Archive confirmation modal */}
+      <ArchiveConfirmModal
+        isOpen={!!archiveTarget}
+        entityType="teacher"
+        entityName={archiveTarget?.name || ''}
+        extraNotes={[
+          'Any future sessions they teach will need a substitute',
+          'Historical attendance and records are preserved',
+          'You can reactivate them later from the detail page',
+        ]}
+        onClose={() => setArchiveTarget(null)}
+        onConfirm={handleArchiveConfirm}
+      />
     </div>
   );
 }

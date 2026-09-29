@@ -19,10 +19,12 @@
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
 *.pem
+Thumbs.db
 
 # debug
 npm-debug.log*
@@ -31,8 +33,10 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*.local
 .env
+.env*.local
+.env.production
+.env.development
 
 # vercel
 .vercel
@@ -40,3 +44,23 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+
+# Scratch / personal / OS
+*.pages
+*.template
+phantom.txt
+reset.txt
+reset-security
+for_delete/
+
+# Supabase local (if you use supabase CLI)
+/supabase/.branches
+/supabase/.temp

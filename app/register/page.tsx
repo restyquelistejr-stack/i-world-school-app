@@ -1,185 +1,206 @@
 'use client';
 
-import { useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { UserService } from '@/lib/userService';
 import Link from 'next/link';
 
 export default function RegisterPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const token = searchParams.get('token');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  const router = useRouter();
+  const [inviteValid, setInviteValid] = useState<boolean | null>(null);
+  const [inviteEmail, setInviteEmail] = useState('');
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const [formData, setFormData] = useState({
+    full_name: '',
+    password: '',
+    confirm_password: '',
+  });
+
+  // Verify invite token on load
+  useEffect(() => {
+    if (token) {
+      verifyInvite();
+    }
+  }, [token]);
+
+  const verifyInvite = async () => {
+    if (!token) return;
+
+    try {
+      const invite = await UserService.verifyInvite(token);
+      if (invite) {
+        setInviteValid(true);
+        setInviteEmail(invite.email);
+      } else {
+        setInviteValid(false);
+        setError('Invalid or expired invite link. Please contact your administrator.');
+      }
+    } catch (error) {
+      setInviteValid(false);
+      setError('Failed to verify invite. Please try again.');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setSuccess(false);
 
-    try {
-      console.log('1. Starting registration for:', email);
-
-      // Step 1: Sign up with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            role: 'student',
-          },
-        },
-      });
-
-      console.log('2. Auth response:', { authData, authError });
-
-      if (authError) {
-        console.error('Auth error:', authError);
-        setError('Auth error: ' + authError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!authData.user) {
-        console.error('No user returned from auth');
-        setError('Failed to create user account');
-        setLoading(false);
-        return;
-      }
-
-      console.log('3. User created with ID:', authData.user.id);
-
-      // Step 2: Try to insert into users table
-      try {
-        const { data: insertData, error: insertError } = await supabase
-          .from('users')
-          .insert({
-            id: authData.user.id,
-            email: email,
-            full_name: fullName,
-            role: 'student',
-          })
-          .select();
-
-        console.log('4. Insert response:', { insertData, insertError });
-
-        if (insertError) {
-          console.error('Insert error details:', {
-            message: insertError.message,
-            code: insertError.code,
-            details: insertError.details,
-            hint: insertError.hint,
-          });
-          
-          // If insert fails, we still have auth user
-          setError('Account created but profile could not be saved. You can still log in.');
-          // Don't set loading to false yet, let the user know they can still login
-        } else {
-          console.log('5. User profile saved successfully!');
-          setSuccess(true);
-        }
-      } catch (insertErr) {
-        console.error('6. Insert exception:', insertErr);
-        setError('Account created but profile save failed. You can still log in.');
-      }
-
-      // Always show success if auth worked (even if profile save failed)
-      if (authData.user) {
-        setSuccess(true);
-        setTimeout(() => {
-          router.push('/login');
-        }, 3000);
-      }
-
-    } catch (error: any) {
-      console.error('Registration error:', error);
-      setError('An unexpected error occurred: ' + (error.message || 'Unknown error'));
+    // Validate password
+    if (formData.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      setLoading(false);
+      return;
     }
 
-    setLoading(false);
+    if (formData.password !== formData.confirm_password) {
+      setError('Passwords do not match');
+      setLoading(false);
+      return;
+    }
+
+    if (!token) {
+      setError('Invalid registration link');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const result = await UserService.completeRegistration(
+        token,
+        formData.password,
+        formData.full_name
+      );
+
+      if (result.session) {
+        // Redirect to dashboard
+        router.push('/dashboard');
+      } else {
+        // User created but needs email confirmation
+        router.push('/login?message=Please check your email to confirm your account');
+      }
+    } catch (error: any) {
+      setError(error.message || 'Registration failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // Invalid invite state
+  if (inviteValid === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+          <div className="text-center">
+            <div className="text-6xl mb-4">🔒</div>
+            <h1 className="text-2xl font-bold text-gray-900">Invalid Invite</h1>
+            <p className="mt-2 text-gray-600">{error}</p>
+            <Link href="/login" className="mt-4 inline-block text-blue-600 hover:underline">
+              Back to Login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Loading invite verification
+  if (inviteValid === null && token) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Verifying your invite...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full">
-        <h1 className="text-2xl font-bold text-center mb-6">School Management System</h1>
-        <h2 className="text-xl font-semibold text-center mb-6">Register</h2>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full space-y-8">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold text-gray-900">Create Your Account</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            You've been invited to join iWorld Learning Center
+          </p>
+          {inviteEmail && (
+            <p className="mt-1 text-sm text-blue-600">
+              Inviting: <span className="font-medium">{inviteEmail}</span>
+            </p>
+          )}
+        </div>
 
-        {success && (
-          <div className="bg-green-50 text-green-600 p-3 rounded-lg mb-4 text-sm">
-            ✅ Registration successful! Redirecting to login...
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="mt-8 space-y-6 bg-white p-8 rounded-lg shadow">
+          {error && (
+            <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
 
-        {error && (
-          <div className="bg-yellow-50 text-yellow-700 p-3 rounded-lg mb-4 text-sm border border-yellow-200">
-            ⚠️ {error}
-          </div>
-        )}
-
-        <form onSubmit={handleRegister}>
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-medium mb-2">
-              Full Name
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Full Name *
             </label>
             <input
               type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={formData.full_name}
+              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+              className="mt-1 block w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500"
               required
+              placeholder="Enter your full name"
             />
           </div>
 
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-medium mb-2">
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-
-          <div className="mb-6">
-            <label className="block text-gray-700 text-sm font-medium mb-2">
-              Password
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Password *
             </label>
             <input
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              className="mt-1 block w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500"
               required
+              placeholder="Min 6 characters"
               minLength={6}
             />
-            <p className="text-gray-500 text-xs mt-1">
-              Password must be at least 6 characters
-            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Confirm Password *
+            </label>
+            <input
+              type="password"
+              value={formData.confirm_password}
+              onChange={(e) => setFormData({ ...formData, confirm_password: e.target.value })}
+              className="mt-1 block w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500"
+              required
+              placeholder="Confirm your password"
+            />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? 'Creating account...' : 'Register'}
+            {loading ? 'Creating Account...' : 'Create Account'}
           </button>
-        </form>
 
-        <p className="text-center text-gray-600 text-sm mt-4">
-          Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">
-            Login
-          </Link>
-        </p>
+          <div className="text-center text-sm text-gray-500">
+            Already have an account?{' '}
+            <Link href="/login" className="text-blue-600 hover:underline">
+              Sign in
+            </Link>
+          </div>
+        </form>
       </div>
     </div>
   );

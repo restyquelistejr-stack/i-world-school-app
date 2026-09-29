@@ -1,3 +1,9 @@
+// app/dashboard/layout.tsx
+// ⭐ M7: Added Substitutes link with live pending count badge
+// ⭐ CHANGED: Removed header-level pending pill (now lives on dashboard page as a card)
+// ⭐ v3.2: Added Rooms Needed link with distinct orange badge
+// ⭐ v3.2: Widened layout — anchored left instead of centered
+// ⭐ v3.2: Colored dot prefix on each "Needed" item (amber / orange)
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -5,57 +11,72 @@ import { supabase } from '@/lib/supabaseClient';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
-const menuItems = [
+// ⭐ v3.2: Extended menu item type to support badge variants
+interface MenuChild {
+  title: string;
+  href: string;
+  showBadge?: boolean;        // amber (teacher substitutes)
+  showRoomBadge?: boolean;    // orange (rooms needed)
+}
+
+interface MenuItem {
+  title: string;
+  icon: string;
+  href?: string;
+  children?: MenuChild[];
+}
+
+const menuItems: MenuItem[] = [
   { title: 'Dashboard', href: '/dashboard', icon: '📊' },
-  { 
-    title: 'Academics', 
+  {
+    title: 'Academics',
     icon: '📚',
     children: [
       { title: 'Courses', href: '/dashboard/academics/courses' },
       { title: 'Inventory', href: '/dashboard/academics/inventory' },
-
-      // { title: 'Class Schedule', href: '/dashboard/classes/calendar' },
     ]
   },
-  { 
-    title: 'Students', 
+  {
+    title: 'Students',
     icon: '👨‍🎓',
     children: [
       { title: 'Directory', href: '/dashboard/students/directory' },
       { title: 'Registration', href: '/dashboard/students/registration' },
-      // { title: 'Enrollments', href: '/dashboard/students/enrollments' },
     ]
   },
-  { 
-    title: 'Staff', 
+  {
+    title: 'Staff',
     icon: '👨‍💼',
     children: [
-      { title: 'Dashboard', href: '/dashboard/staff/dashboard' },
-      { title: 'Directory', href: '/dashboard/staff/directory' },
-      { title: 'Attendance', href: '/dashboard/staff/attendance' },
+     // { title: 'Dashboard', href: '/dashboard/staff' },
+      { title: 'Directory', href: '/dashboard/staff/list' },
+      { title: 'Teachers', href: '/dashboard/staff/teachers' },
+     // { title: 'Teacher Matching', href: '/dashboard/staff/matching' },
+     // { title: 'Attendance', href: '/dashboard/staff/attendance' },
     ]
   },
-  { 
-    title: 'Classes', 
+  {
+    title: 'Classes',
     icon: '📅',
     children: [
       { title: 'Management', href: '/dashboard/classes/management' },
       { title: 'Calendar', href: '/dashboard/classes/calendar' },
-      { title: 'Inquire Class', href: '/dashboard/classes/inquire' },
+      { title: 'New Booking', href: '/dashboard/classes/book' },
+      { title: 'Group Class', href: '/dashboard/classes/group-class/create' },
+      // ⭐ v3.2: Two distinct "Needed" queues
+      { title: 'Teacher Subs', href: '/dashboard/substitutes/needed', showBadge: true },
+      { title: 'Rooms Needed', href: '/dashboard/classes/rooms/needed', showRoomBadge: true },
+      { title: 'Manage Room Bookings', href: '/dashboard/room-booking/manage' },
     ]
   },
   {
-  title: 'Room Booking',
-  //href: '/dashboard/room-booking',
-  icon: '📅',
-  children: [
-    { title: 'Book a Room', href: '/dashboard/room-booking' },
-    //{ title: 'Calendar View', href: '/dashboard/room-booking/calendar' },
-  ]
+    title: 'Settings',
+    icon: '⚙️',
+    children: [
+      { title: 'My Profile', href: '/dashboard/profile' },
+      { title: 'Users', href: '/dashboard/users' },
+    ]
   },
-  //{ title: 'Reports', href: '/dashboard/reports', icon: '📊' },
-  //{ title: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
-  { title: 'My Profile', href: '/dashboard/profile', icon: '👤' },
 ];
 
 export default function DashboardLayout({
@@ -68,6 +89,10 @@ export default function DashboardLayout({
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
+  // ⭐ M7: Live pending count for sidebar Substitutes badge
+  const [pendingSubstitutes, setPendingSubstitutes] = useState<number>(0);
+  // ⭐ v3.2: Live pending count for Rooms Needed badge
+  const [roomNeededCount, setRoomNeededCount] = useState<number>(0);
 
   useEffect(() => {
     const getUser = async () => {
@@ -78,12 +103,51 @@ export default function DashboardLayout({
     getUser();
   }, []);
 
+  // ⭐ M7 + v3.2: Load + refresh both badges
+  useEffect(() => {
+    loadBadgeCounts();
+
+    const interval = setInterval(loadBadgeCounts, 60000);
+    return () => clearInterval(interval);
+  }, [pathname]);
+
+  async function loadBadgeCounts() {
+    // Teacher substitutes — pending assignments
+    try {
+      const { count, error } = await supabase
+        .from('substitute_assignments')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending');
+
+      if (!error && count !== null) {
+        setPendingSubstitutes(count);
+      }
+    } catch (err) {
+      console.warn('Could not load pending substitutes count:', err);
+    }
+
+    // ⭐ v3.2: Rooms needed — flagged room_unassigned sessions
+    try {
+      const { count, error } = await supabase
+        .from('group_class_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('needs_attention', true)
+        .eq('attention_reason', 'room_unassigned');
+
+      if (!error && count !== null) {
+        setRoomNeededCount(count);
+      }
+    } catch (err) {
+      console.warn('Could not load rooms needed count:', err);
+    }
+  }
+
   useEffect(() => {
     // Auto-expand menu items that have active children
     const newOpenMenus: Record<string, boolean> = {};
     menuItems.forEach((item) => {
       if (item.children) {
-        const hasActiveChild = item.children.some(child => 
+        const hasActiveChild = item.children.some(child =>
           pathname === child.href || pathname?.startsWith(child.href + '/')
         );
         if (hasActiveChild) {
@@ -123,13 +187,13 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Top Header */}
+      {/* Top Header — full-width, anchored */}
       <header className="bg-white shadow-sm sticky top-0 z-50 border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+        <div className="px-6 h-16 flex justify-between items-center">
           <Link href="/dashboard" className="text-xl font-bold text-blue-600 hover:text-blue-700">
-            🏫 iWorld Learning Center
+            🏫 School of Nation Learning Center
           </Link>
-          
+
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm text-gray-700">
               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-medium">
@@ -139,7 +203,7 @@ export default function DashboardLayout({
                 {user?.user_metadata?.full_name || user?.email}
               </span>
             </div>
-            
+
             <button
               onClick={handleLogout}
               className="px-3 py-1.5 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition"
@@ -150,15 +214,16 @@ export default function DashboardLayout({
         </div>
       </header>
 
-      <div className="flex max-w-7xl mx-auto px-4 py-6 gap-6">
+      {/* ⭐ v3.2: Anchored left layout — no more mx-auto centering */}
+      <div className="flex px-4 py-6 gap-6 w-full">
         {/* Sidebar */}
-        <aside className="w-64 flex-shrink-0">
-          <nav className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 space-y-0.5 sticky top-24">
+        <aside className="w-56 flex-shrink-0">
+          <nav className="bg-white rounded-xl shadow-sm border border-gray-100 p-2 space-y-0.5 sticky top-24">
             {menuItems.map((item) => {
               if (item.children) {
                 const isOpen = openMenus[item.title] || false;
                 const hasActiveChild = item.children.some(child => isActive(child.href));
-                
+
                 return (
                   <div key={item.title} className="mb-0.5">
                     <button
@@ -170,35 +235,68 @@ export default function DashboardLayout({
                       }`}
                     >
                       <span className="flex items-center gap-2.5">
-                        <span className="text-base w-6 text-center">{item.icon}</span>
+                        <span className="text-base w-5 text-center">{item.icon}</span>
                         {item.title}
                       </span>
                       <span className={`text-xs text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}>
                         ▶
                       </span>
                     </button>
-                    
+
                     {isOpen && (
-                      <div className="ml-9 mt-0.5 space-y-0.5 border-l-2 border-gray-200 pl-2">
-                        {item.children.map((child) => (
-                          <Link
-                            key={child.href}
-                            href={child.href}
-                            className={`block px-3 py-1.5 rounded-lg text-sm transition ${
-                              isActive(child.href)
-                                ? 'bg-blue-50 text-blue-700 font-medium'
-                                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                            }`}
-                          >
-                            {child.title}
-                          </Link>
-                        ))}
+                      <div className="ml-8 mt-0.5 space-y-0.5 border-l-2 border-gray-200 pl-2">
+                        {item.children.map((child) => {
+                          const isChildActive = isActive(child.href);
+                          const showSubstituteBadge = child.showBadge && pendingSubstitutes > 0;
+                          const showRoomBadge = child.showRoomBadge && roomNeededCount > 0;
+
+                          // ⭐ v3.2: Distinguish room vs teacher entries via colored dot
+                          const isRoomItem = !!child.showRoomBadge;
+                          const isTeacherSubItem = !!child.showBadge;
+
+                          return (
+                            <Link
+                              key={child.href}
+                              href={child.href}
+                              className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-sm transition ${
+                                isChildActive
+                                  ? 'bg-blue-50 text-blue-700 font-medium'
+                                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                              }`}
+                            >
+                              {/* ⭐ v3.2: Colored dot + label */}
+                              <span className="flex items-center gap-2 truncate">
+                                {isRoomItem && (
+                                  <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                                )}
+                                {isTeacherSubItem && (
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                )}
+                                <span className="truncate">{child.title}</span>
+                              </span>
+
+                              {/* Amber badge — Teacher Substitutes */}
+                              {showSubstituteBadge && (
+                                <span className="ml-2 px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] text-center shrink-0">
+                                  {pendingSubstitutes > 99 ? '99+' : pendingSubstitutes}
+                                </span>
+                              )}
+
+                              {/* Orange badge — Rooms Needed */}
+                              {showRoomBadge && (
+                                <span className="ml-2 px-1.5 py-0.5 bg-orange-500 text-white text-[10px] font-bold rounded-full min-w-[18px] text-center shrink-0">
+                                  {roomNeededCount > 99 ? '99+' : roomNeededCount}
+                                </span>
+                              )}
+                            </Link>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 );
               }
-              
+
               return (
                 <Link
                   key={item.href}
@@ -209,7 +307,7 @@ export default function DashboardLayout({
                       : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
-                  <span className="text-base w-6 text-center">{item.icon}</span>
+                  <span className="text-base w-5 text-center">{item.icon}</span>
                   {item.title}
                 </Link>
               );
@@ -217,7 +315,7 @@ export default function DashboardLayout({
           </nav>
         </aside>
 
-        {/* Main Content */}
+        {/* Main Content — no max-width constraint */}
         <main className="flex-1 min-w-0">
           {children}
         </main>

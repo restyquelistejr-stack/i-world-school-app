@@ -1,3 +1,4 @@
+// app/dashboard/staff/teachers/create/page.tsx
 'use client';
 
 import { useState } from 'react';
@@ -5,16 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-const SPECIALTIES = [
-  'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Science',
-  'English', 'Literature', 'Writing', 'Speech', 'Drama',
-  'History', 'Geography', 'Social Studies', 'Economics', 'Political Science',
-  'Art', 'Design', 'Music', 'Photography', 'Digital Arts',
-  'Computer Science', 'Programming', 'Web Development', 'AI', 'Data Science',
-  'Physical Education', 'Sports', 'Health', 'Swimming', 'Coaching',
-  'Languages', 'Chinese', 'Malay', 'Indonesian', 'Japanese', 'Korean', 'Spanish', 'French', 'Portuguese'
-];
-
+const TEACHER_TYPES = ['full-time', 'part-time'];
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function CreateTeacherPage() {
@@ -24,14 +16,14 @@ export default function CreateTeacherPage() {
     full_name: '',
     email: '',
     phone: '',
+    specialization: '',
+    teacher_type: 'full-time' as 'full-time' | 'part-time',
+    profile_headline: '',
     bio: '',
     about: '',
-    profile_headline: '',
-    specialization: '',
-    years_experience: 0,
     hourly_rate: 0,
+    years_experience: 0,
     teaching_style: '',
-    max_classes_per_day: 5,
   });
 
   const [availability, setAvailability] = useState([
@@ -65,45 +57,46 @@ export default function CreateTeacherPage() {
     setLoading(true);
 
     try {
-      // 1. First, check if user exists or create one
-      let userId = formData.email;
-      
-      // Check if user already exists
-      const { data: existingUser, error: checkError } = await supabase
+      // 1. Check if user exists
+      const { data: existingUser } = await supabase
         .from('users')
         .select('id')
         .eq('email', formData.email)
         .single();
 
-      let user;
-      if (!existingUser) {
-        // Create user
+      let userId;
+
+      if (existingUser) {
+        userId = existingUser.id;
+        alert('⚠️ A user with this email already exists. They will be updated to a teacher role.');
+      } else {
+        // 2. Create user
         const { data: newUser, error: userError } = await supabase
           .from('users')
           .insert({
             email: formData.email,
             full_name: formData.full_name,
+            phone: formData.phone || null,
             role: 'teacher',
             is_active: true,
           })
           .select()
           .single();
 
-        if (userError) throw userError;
-        user = newUser;
-      } else {
-        user = existingUser;
+        if (userError) throw new Error(userError.message);
+        userId = newUser.id;
       }
 
-      // 2. Create teacher record
+      // 3. Create teacher record
       const { data: teacherData, error: teacherError } = await supabase
         .from('teachers')
         .insert({
-          id: user.id,
+          id: userId,
           specialization: formData.specialization,
+          teacher_type: formData.teacher_type,
+          profile_headline: formData.profile_headline,
           bio: formData.bio,
           about: formData.about,
-          profile_headline: formData.profile_headline,
           hourly_rate: formData.hourly_rate,
           years_experience: formData.years_experience,
           teaching_style: formData.teaching_style,
@@ -112,9 +105,9 @@ export default function CreateTeacherPage() {
         .select()
         .single();
 
-      if (teacherError) throw teacherError;
+      if (teacherError) throw new Error(teacherError.message);
 
-      // 3. Create availability slots
+      // 4. Create availability slots
       const availabilityData = availability
         .filter(slot => slot.is_available)
         .map(slot => ({
@@ -130,15 +123,19 @@ export default function CreateTeacherPage() {
           .from('teacher_availability')
           .insert(availabilityData);
 
-        if (availError) throw availError;
+        if (availError) {
+          console.warn('Availability creation failed:', availError);
+          // Don't fail the whole process, just warn
+        }
       }
 
       alert('✅ Teacher created successfully!');
-      router.push('/dashboard/staff/teachers');
+      router.push(`/dashboard/staff/teachers/view?id=${teacherData.id}`);
     } catch (error: any) {
       console.error('Error creating teacher:', error);
       alert('Error: ' + error.message);
     }
+
     setLoading(false);
   }
 
@@ -151,7 +148,7 @@ export default function CreateTeacherPage() {
         <h1 className="text-2xl font-bold text-gray-900">Add New Teacher</h1>
       </div>
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6 border border-gray-200">
         {/* Basic Info */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -184,6 +181,19 @@ export default function CreateTeacherPage() {
             />
           </div>
           <div>
+            <label className="block text-sm font-medium mb-1">Teacher Type *</label>
+            <select
+              value={formData.teacher_type}
+              onChange={(e) => setFormData({ ...formData, teacher_type: e.target.value as 'full-time' | 'part-time' })}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              required
+            >
+              {TEACHER_TYPES.map((type) => (
+                <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">Hourly Rate ($)</label>
             <input
               type="number"
@@ -194,53 +204,6 @@ export default function CreateTeacherPage() {
               step={5}
             />
           </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">Profile Headline</label>
-          <input
-            type="text"
-            value={formData.profile_headline}
-            onChange={(e) => setFormData({ ...formData, profile_headline: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="e.g. Senior Mathematics Teacher"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">Specialization</label>
-          <input
-            type="text"
-            value={formData.specialization}
-            onChange={(e) => setFormData({ ...formData, specialization: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="e.g. Mathematics, Physics, Chemistry"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">Bio</label>
-          <textarea
-            value={formData.bio}
-            onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-            rows={2}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="Short bio..."
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">About</label>
-          <textarea
-            value={formData.about}
-            onChange={(e) => setFormData({ ...formData, about: e.target.value })}
-            rows={3}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="Detailed description..."
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Years Experience</label>
             <input
@@ -251,14 +214,54 @@ export default function CreateTeacherPage() {
               min={0}
             />
           </div>
-          <div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">Profile Headline</label>
+            <input
+              type="text"
+              value={formData.profile_headline}
+              onChange={(e) => setFormData({ ...formData, profile_headline: e.target.value })}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., Senior Mathematics Teacher"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">Specialization</label>
+            <input
+              type="text"
+              value={formData.specialization}
+              onChange={(e) => setFormData({ ...formData, specialization: e.target.value })}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., Mathematics, English"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">Bio</label>
+            <textarea
+              value={formData.bio}
+              onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+              rows={2}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="Short bio..."
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">About</label>
+            <textarea
+              value={formData.about}
+              onChange={(e) => setFormData({ ...formData, about: e.target.value })}
+              rows={3}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="Detailed description..."
+            />
+          </div>
+          <div className="col-span-2">
             <label className="block text-sm font-medium mb-1">Teaching Style</label>
             <input
               type="text"
               value={formData.teaching_style}
               onChange={(e) => setFormData({ ...formData, teaching_style: e.target.value })}
               className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="e.g. Interactive, Discussion-based"
+              placeholder="e.g., Interactive, Discussion-based"
             />
           </div>
         </div>

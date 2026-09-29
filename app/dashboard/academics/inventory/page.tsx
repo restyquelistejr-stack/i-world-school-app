@@ -18,12 +18,19 @@ interface InventoryBook {
   location: string;
   notes: string;
   created_at: string;
-  linked_courses?: { id: string; name: string }[];
+  linked_modules?: { id: string; title: string; course_name: string; course_id: string }[];
 }
 
 interface Course {
   id: string;
   name: string;
+}
+
+interface Module {
+  id: string;
+  title: string;
+  level: string;
+  course_id: string;
 }
 
 interface CheckoutRecord {
@@ -39,23 +46,27 @@ interface CheckoutRecord {
 export default function InventoryPage() {
   const [books, setBooks] = useState<InventoryBook[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
+  const [filteredModules, setFilteredModules] = useState<Module[]>([]);
   const [students, setStudents] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Checkout History Modal State
   const [showCheckoutHistoryModal, setShowCheckoutHistoryModal] = useState(false);
   const [checkoutHistory, setCheckoutHistory] = useState<CheckoutRecord[]>([]);
   const [historyBookTitle, setHistoryBookTitle] = useState('');
   const [historyBookId, setHistoryBookId] = useState('');
-  
+  const [historyLoading, setHistoryLoading] = useState(false);   // ⭐ NEW
+
   // Modal States
   const [showForm, setShowForm] = useState(false);
   const [editingBook, setEditingBook] = useState<InventoryBook | null>(null);
-  
-  // Link Book to Course State
+
+  // Link Book to Module State
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkingBookId, setLinkingBookId] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState('');
+  const [selectedModuleId, setSelectedModuleId] = useState('');
 
   // Checkout State
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
@@ -81,48 +92,70 @@ export default function InventoryPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (selectedCourseId) {
+      const filtered = modules.filter(m => m.course_id === selectedCourseId);
+      setFilteredModules(filtered);
+      setSelectedModuleId('');
+    } else {
+      setFilteredModules([]);
+      setSelectedModuleId('');
+    }
+  }, [selectedCourseId, modules]);
+
   async function loadData() {
     setLoading(true);
-    
-    const [booksRes, coursesRes, studentsRes] = await Promise.all([
+
+    const [booksRes, coursesRes, modulesRes, studentsRes] = await Promise.all([
       supabase.from('inventory_books').select('*').order('title'),
       supabase.from('courses').select('id, name').eq('is_active', true).order('name'),
+      supabase.from('course_modules').select('id, title, level, course_id').order('title'),
       supabase.from('users').select('id, full_name').eq('role', 'student').eq('is_active', true).order('full_name')
     ]);
-    
+
     const fetchedBooks = booksRes.data || [];
     const fetchedCourses = coursesRes.data || [];
-    
+    const fetchedModules = modulesRes.data || [];
+
     if (!booksRes.error) setBooks(fetchedBooks);
     if (!coursesRes.error) setCourses(fetchedCourses);
+    if (!modulesRes.error) setModules(fetchedModules);
     if (!studentsRes.error) setStudents(studentsRes.data || []);
-    
-    // Enrich books with their linked courses
+
     if (fetchedBooks.length > 0) {
       const bookIds = fetchedBooks.map(b => b.id);
       const { data: linksData, error: linksError } = await supabase
-        .from('course_resources')
-        .select('book_id, course_id')
+        .from('course_module_books')
+        .select('book_id, module_id')
         .in('book_id', bookIds);
-      
+
       if (!linksError && linksData) {
         const courseMap = new Map(fetchedCourses.map(c => [c.id, c.name]));
-        
+
         const enrichedBooks = fetchedBooks.map(book => {
-          const linkedCourseIds = linksData
+          const linkedModuleIds = linksData
             .filter(link => link.book_id === book.id)
-            .map(link => link.course_id);
-            
+            .map(link => link.module_id);
+
           return {
             ...book,
-            linked_courses: linkedCourseIds
-              .map(id => ({ id, name: courseMap.get(id) || 'Unknown' }))
+            linked_modules: linkedModuleIds
+              .map(id => {
+                const module = fetchedModules.find(m => m.id === id);
+                return module ? {
+                  id: module.id,
+                  title: module.title,
+                  course_name: courseMap.get(module.course_id) || 'Unknown',
+                  course_id: module.course_id,
+                } : null;
+              })
+              .filter(Boolean),
           };
         });
         setBooks(enrichedBooks);
       }
     }
-    
+
     setLoading(false);
   }
 
@@ -164,12 +197,12 @@ export default function InventoryPage() {
     else alert('Error deleting: ' + error.message);
   }
 
-  async function handleLinkToCourse() {
-    if (!linkingBookId || !selectedCourseId) return;
+  async function handleLinkToModule() {
+    if (!linkingBookId || !selectedModuleId) return;
     const { error } = await supabase
-      .from('course_resources')
-      .insert({ course_id: selectedCourseId, book_id: linkingBookId });
-    if (error) alert('Error linking book to course: ' + error.message);
+      .from('course_module_books')
+      .insert({ book_id: linkingBookId, module_id: selectedModuleId });
+    if (error) alert('Error linking book to module: ' + error.message);
     else {
       alert('✅ Book linked successfully!');
       closeModals();
@@ -177,13 +210,13 @@ export default function InventoryPage() {
     }
   }
 
-  async function handleUnlinkCourse(bookId: string, courseId: string) {
-    if (!confirm('Remove this book from this course?')) return;
+  async function handleUnlinkModule(bookId: string, moduleId: string) {
+    if (!confirm('Remove this book from this module?')) return;
     const { error } = await supabase
-      .from('course_resources')
+      .from('course_module_books')
       .delete()
       .eq('book_id', bookId)
-      .eq('course_id', courseId);
+      .eq('module_id', moduleId);
     if (!error) loadData();
     else alert('Error unlinking: ' + error.message);
   }
@@ -213,38 +246,73 @@ export default function InventoryPage() {
     loadData();
   }
 
-  // --- CHECKOUT HISTORY FUNCTIONS ---
+  // ==========================================
+  // ⭐ FIX: Checkout History — two-query approach
+  // ==========================================
   async function openCheckoutHistory(bookId: string, bookTitle: string) {
     setHistoryBookId(bookId);
     setHistoryBookTitle(bookTitle);
     setShowCheckoutHistoryModal(true);
-    
-    const { data, error } = await supabase
+    setCheckoutHistory([]);
+    setHistoryLoading(true);
+
+    // 1. Fetch raw checkouts (no join)
+    const { data: checkouts, error } = await supabase
       .from('book_checkouts')
-      .select('id, student_id, checked_out_at, returned_at, student:student_id ( full_name )')
+      .select('id, student_id, checked_out_at, returned_at')
       .eq('book_id', bookId)
       .order('checked_out_at', { ascending: false });
-      
-    if (!error) {
-      // ✅ FIX: Map the Supabase response to match the CheckoutRecord interface
-      const formattedHistory = (data || []).map((record: any) => ({
-        ...record,
-        student: record.student?.[0] || { full_name: 'Unknown' }
-      }));
-      setCheckoutHistory(formattedHistory);
-    } else {
+
+    if (error) {
       alert('Error loading history: ' + error.message);
+      setHistoryLoading(false);
+      return;
     }
+
+    if (!checkouts || checkouts.length === 0) {
+      setCheckoutHistory([]);
+      setHistoryLoading(false);
+      return;
+    }
+
+    // 2. Batch-resolve student names
+    const studentIds = [...new Set(checkouts.map((c: any) => c.student_id).filter(Boolean))];
+
+    let studentMap: Record<string, string> = {};
+    if (studentIds.length > 0) {
+      const { data: studentsData, error: sErr } = await supabase
+        .from('users')
+        .select('id, full_name')
+        .in('id', studentIds);
+
+      if (sErr) {
+        console.error('Error loading student names:', sErr);
+      } else if (studentsData) {
+        studentMap = Object.fromEntries(studentsData.map((s: any) => [s.id, s.full_name]));
+      }
+    }
+
+    // 3. Merge — fall back gracefully
+    const formattedHistory: CheckoutRecord[] = checkouts.map((c: any) => ({
+      id: c.id,
+      student_id: c.student_id,
+      checked_out_at: c.checked_out_at,
+      returned_at: c.returned_at,
+      student: {
+        full_name: studentMap[c.student_id] || 'Unknown Student',
+      },
+    }));
+
+    setCheckoutHistory(formattedHistory);
+    setHistoryLoading(false);
   }
 
   async function handleReturnBook(checkoutId: string) {
     if (!confirm('Return this book?')) return;
-    
-    // 1. Find the book to increase quantity
+
     const book = books.find(b => b.id === historyBookId);
     if (!book) return;
 
-    // 2. Update available quantity
     const { error: updateError } = await supabase
       .from('inventory_books')
       .update({ available_quantity: book.available_quantity + 1 })
@@ -252,7 +320,6 @@ export default function InventoryPage() {
 
     if (updateError) { alert('Error updating stock: ' + updateError.message); return; }
 
-    // 3. Mark the checkout as returned
     const { error: logError } = await supabase
       .from('book_checkouts')
       .update({ returned_at: new Date().toISOString() })
@@ -261,7 +328,6 @@ export default function InventoryPage() {
     if (logError) alert('Error logging return: ' + logError.message);
     else {
       alert('✅ Book returned successfully!');
-      // Refresh history and main list
       openCheckoutHistory(historyBookId, historyBookTitle);
       loadData();
     }
@@ -292,11 +358,14 @@ export default function InventoryPage() {
     setShowLinkModal(false);
     setLinkingBookId(null);
     setSelectedCourseId('');
+    setSelectedModuleId('');
+    setFilteredModules([]);
     setShowCheckoutModal(false);
     setCheckoutBookId(null);
     setSelectedStudentId('');
     setShowCheckoutHistoryModal(false);
     setCheckoutHistory([]);
+    setHistoryLoading(false);
   }
 
   if (loading) return <div className="p-6 flex items-center justify-center h-64">Loading inventory...</div>;
@@ -306,15 +375,14 @@ export default function InventoryPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📚 Book Inventory</h1>
-          <p className="text-sm text-gray-500">Manage course materials, suppliers, and reordering</p>
+          <p className="text-sm text-gray-500">Manage course materials and link to modules</p>
         </div>
-        <button onClick={() => { setEditingBook(null); setFormData({ title: '', author: '', isbn: '', total_quantity: 1, reorder_quantity: 0, supplier: '', publisher: '', delivery_lead_days: 0, image_url: '', location: '', notes: '' }); setShowForm(true); }} 
+        <button onClick={() => { setEditingBook(null); setFormData({ title: '', author: '', isbn: '', total_quantity: 1, reorder_quantity: 0, supplier: '', publisher: '', delivery_lead_days: 0, image_url: '', location: '', notes: '' }); setShowForm(true); }}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
           + Add New Book
         </button>
       </div>
 
-      {/* Book List Grid */}
       {books.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-12 text-center border border-gray-200">
           <p className="text-gray-500 text-lg">No books in inventory yet.</p>
@@ -324,11 +392,11 @@ export default function InventoryPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {books.map((book) => {
             const needsReorder = book.available_quantity <= book.reorder_quantity;
-            const hasCourses = book.linked_courses && book.linked_courses.length > 0;
-            
+            const hasModules = book.linked_modules && book.linked_modules.length > 0;
+
             return (
               <div key={book.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition relative group flex flex-col">
-                
+
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex items-center gap-3">
                     {book.image_url && (
@@ -349,23 +417,22 @@ export default function InventoryPage() {
                 </div>
 
                 {book.isbn && <p className="text-xs text-gray-400 mt-1">ISBN: {book.isbn}</p>}
-                
+
                 <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-gray-500">
                   {book.publisher && <span>📚 {book.publisher}</span>}
                   {book.supplier && <span>📦 {book.supplier}</span>}
                   {book.delivery_lead_days > 0 && <span>⏱️ {book.delivery_lead_days} days lead</span>}
                 </div>
 
-                {/* Linked Courses Section */}
-                {hasCourses && (
+                {hasModules && (
                   <div className="mt-2 pb-2 border-b border-gray-100">
-                    <p className="text-[10px] font-medium text-gray-500 mb-1">Linked to:</p>
+                    <p className="text-[10px] font-medium text-gray-500 mb-1">Linked to Modules:</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {book.linked_courses!.map((course) => (
-                        <span key={course.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] rounded-full border border-indigo-200">
-                          📖 {course.name}
-                          <button 
-                            onClick={() => handleUnlinkCourse(book.id, course.id)}
+                      {book.linked_modules!.map((module) => (
+                        <span key={module.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] rounded-full border border-indigo-200">
+                          📖 {module.course_name}: {module.title}
+                          <button
+                            onClick={() => handleUnlinkModule(book.id, module.id)}
                             className="hover:text-red-600 transition ml-0.5"
                           >
                             ✕
@@ -394,18 +461,16 @@ export default function InventoryPage() {
                 </div>
                 {book.notes && <p className="text-xs text-gray-400 mt-2 italic border-t border-gray-100 pt-2">"{book.notes}"</p>}
 
-                {/* Action Buttons */}
                 <div className="mt-3 pt-2 border-t border-gray-100 flex flex-wrap gap-2">
-                  {/* View Checkouts Button - NEW */}
-                  <button 
+                  <button
                     onClick={() => openCheckoutHistory(book.id, book.title)}
                     className="px-2 py-1 text-[10px] font-medium bg-gray-50 text-gray-600 rounded hover:bg-gray-100 border border-gray-200 transition"
                   >
                     👁️ Checkouts
                   </button>
-                  
+
                   <button onClick={() => { setLinkingBookId(book.id); setShowLinkModal(true); }} className="px-2 py-1 text-[10px] font-medium bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 transition">
-                    🔗 Link to Course
+                    🔗 Link to Module
                   </button>
                   <button onClick={() => { setCheckoutBookId(book.id); setShowCheckoutModal(true); }} disabled={book.available_quantity === 0} className="px-2 py-1 text-[10px] font-medium bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition disabled:opacity-50">
                     📤 Checkout
@@ -488,19 +553,58 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Link to Course Modal */}
+      {/* Link to Module Modal */}
       {showLinkModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full p-6">
-            <h2 className="text-lg font-bold mb-4">🔗 Link Book to Course</h2>
-            <p className="text-sm text-gray-600 mb-4">Which course uses this book?</p>
-            <select value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)} className="w-full border rounded-lg p-2 text-sm mb-4">
-              <option value="">Select a Course...</option>
-              {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h2 className="text-lg font-bold mb-4">🔗 Link Book to Module</h2>
+            <p className="text-sm text-gray-600 mb-4">Select a course, then a module to link this book.</p>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1">Course *</label>
+              <select
+                value={selectedCourseId}
+                onChange={(e) => setSelectedCourseId(e.target.value)}
+                className="w-full border rounded-lg p-2 text-sm"
+              >
+                <option value="">Select a course...</option>
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1">Module *</label>
+              <select
+                value={selectedModuleId}
+                onChange={(e) => setSelectedModuleId(e.target.value)}
+                className="w-full border rounded-lg p-2 text-sm"
+                disabled={!selectedCourseId || filteredModules.length === 0}
+              >
+                <option value="">
+                  {!selectedCourseId ? 'Select a course first...' : 'Select a module...'}
+                </option>
+                {filteredModules.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.title} {m.level ? `(${m.level})` : ''}
+                  </option>
+                ))}
+              </select>
+              {selectedCourseId && filteredModules.length === 0 && (
+                <p className="text-xs text-yellow-600 mt-1">No modules found for this course.</p>
+              )}
+            </div>
+
             <div className="flex justify-end gap-2">
               <button onClick={closeModals} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">Cancel</button>
-              <button onClick={handleLinkToCourse} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Link</button>
+              <button
+                onClick={handleLinkToModule}
+                disabled={!selectedModuleId}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                Link Book
+              </button>
             </div>
           </div>
         </div>
@@ -524,7 +628,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Checkout History Modal - NEW */}
+      {/* ⭐ FIX: Checkout History Modal — shows proper names + loading state */}
       {showCheckoutHistoryModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
@@ -532,27 +636,41 @@ export default function InventoryPage() {
               <h2 className="text-lg font-bold">📋 Checkout History</h2>
               <button onClick={closeModals} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
-            <p className="text-sm text-gray-500 mb-4">Book: <span className="font-medium text-gray-800">{historyBookTitle}</span></p>
-            
-            {checkoutHistory.length === 0 ? (
+            <p className="text-sm text-gray-500 mb-4">
+              Book: <span className="font-medium text-gray-800">{historyBookTitle}</span>
+            </p>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <span className="animate-spin inline-block w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full mr-3"></span>
+                <span className="text-sm text-gray-500">Loading history...</span>
+              </div>
+            ) : checkoutHistory.length === 0 ? (
               <p className="text-gray-400 text-center py-4">No checkout history for this book.</p>
             ) : (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                 {checkoutHistory.map((record) => {
                   const isOut = !record.returned_at;
                   return (
-                    <div key={record.id} className={`flex items-center justify-between p-3 rounded-lg border ${isOut ? 'border-blue-200 bg-blue-50/50' : 'border-gray-100 bg-gray-50'}`}>
+                    <div
+                      key={record.id}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        isOut ? 'border-blue-200 bg-blue-50/50' : 'border-gray-100 bg-gray-50'
+                      }`}
+                    >
                       <div>
                         <div className="font-medium text-gray-800">{record.student.full_name}</div>
                         <div className="text-xs text-gray-500">
                           Checked out: {new Date(record.checked_out_at).toLocaleDateString()}
                           {record.returned_at && (
-                            <span className="ml-2 text-green-600">• Returned: {new Date(record.returned_at).toLocaleDateString()}</span>
+                            <span className="ml-2 text-green-600">
+                              • Returned: {new Date(record.returned_at).toLocaleDateString()}
+                            </span>
                           )}
                         </div>
                       </div>
                       {isOut && (
-                        <button 
+                        <button
                           onClick={() => handleReturnBook(record.id)}
                           className="px-3 py-1 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 transition"
                         >
