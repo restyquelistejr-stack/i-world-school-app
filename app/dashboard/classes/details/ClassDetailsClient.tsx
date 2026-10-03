@@ -1,6 +1,7 @@
 // app/dashboard/classes/details/ClassDetailsClient.tsx
 // ⭐ v3.8: Shows substitute teacher when assigned
 // ⭐ v3.9: Teacher contact info visible in summary
+// ⭐ v3.15: Attendance column + SessionRosterModal wired for private classes
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -9,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import EnrollStudentsModal from '@/components/EnrollStudentsModal';
 import TeacherContactInfo from '@/components/TeacherContactInfo';
+import SessionRosterModal from '@/components/SessionRosterModal';   // ⭐ v3.15
 
 export default function ClassDetailsClient({ classId }: { classId: string }) {
   const router = useRouter();
@@ -37,6 +39,12 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
   } | null>(null);
 
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+
+  // ⭐ v3.15: attendance modal state
+  const [rosterBooking, setRosterBooking] = useState<{
+    bookingId: string;
+    label: string;
+  } | null>(null);
 
   // ==========================================================
   // LOAD DETAILS
@@ -130,6 +138,7 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
       if (roomRes.data) setRoomName(roomRes.data.name);
 
       // ⭐ v3.8: Build substitute map keyed by booking start_time
+      // ⭐ v3.15: Also build booking map so private sessions can link to their booking row
       const bookings = bookingsRes.data || [];
 
       const substituteTeacherIds = [
@@ -163,9 +172,21 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
         }
       }
 
+      // ⭐ v3.15: map bookings by start_time → booking id + teacher id
+      const bookingByStartTime: Record<string, { id: string; teacher_id: string | null }> = {};
+      for (const b of bookings) {
+        if (b.start_time) {
+          bookingByStartTime[b.start_time] = {
+            id: b.id,
+            teacher_id: b.teacher_id || null,
+          };
+        }
+      }
+
       if (scheduleRes.data) {
         const scheduleWithDetails = scheduleRes.data.map((item: any) => {
           const subInfo = substituteByStartTime[item.start_time];
+          const realBooking = bookingByStartTime[item.start_time]; // ⭐ v3.15
           return {
             ...item,
             room_name: item.rooms?.name || roomRes.data?.name || 'Not Assigned',
@@ -174,6 +195,8 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
             substitute_teacher_name: subInfo?.substitute_teacher_name || null,
             needs_attention: subInfo?.needs_attention || false,
             attention_reason: subInfo?.attention_reason || null,
+            booking_id: realBooking?.id || null,               // ⭐ v3.15
+            booking_teacher_id: realBooking?.teacher_id || null, // ⭐ v3.15
           };
         });
         setLockedSchedules(scheduleWithDetails);
@@ -618,6 +641,10 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Teacher
                     </th>
+                    {/* ⭐ v3.15 — Actions */}
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -661,6 +688,24 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
                             <span className="text-gray-600">
                               {s.teacher_name || 'Not Assigned'}
                             </span>
+                          )}
+                        </td>
+                        {/* ⭐ v3.15 — Attendance button (only when a real booking exists) */}
+                        <td className="px-4 py-2 text-sm">
+                          {s.booking_id ? (
+                            <button
+                              onClick={() =>
+                                setRosterBooking({
+                                  bookingId: s.booking_id,
+                                  label: `Session ${idx + 1} · ${new Date(s.start_time).toLocaleString()}`,
+                                })
+                              }
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap"
+                            >
+                              📋 Attendance
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">—</span>
                           )}
                         </td>
                       </tr>
@@ -790,6 +835,18 @@ export default function ClassDetailsClient({ classId }: { classId: string }) {
         }}
         defaultTab="new"
       />
+
+      {/* ⭐ v3.15 — Attendance modal for private sessions */}
+      {rosterBooking && (
+        <SessionRosterModal
+          isOpen={!!rosterBooking}
+          sessionType="booking"
+          sessionId={rosterBooking.bookingId}
+          sessionLabel={rosterBooking.label}
+          onClose={() => setRosterBooking(null)}
+          onSaved={loadDetails}
+        />
+      )}
     </div>
   );
 }

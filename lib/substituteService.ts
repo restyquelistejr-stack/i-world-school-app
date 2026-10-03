@@ -2,7 +2,8 @@
 // ⭐ Substitute teacher system — helper service
 // ⭐ M5 FIX: Robust unflag + leave_id linking on dedupe
 // ⭐ v3.3 FIX (A): Timezone bug — string extraction instead of new Date().toISOString()
-// ⭐ v3.3 FIX (B): staff_courses.has no is_active column — removed filter + added error logs
+// ⭐ v3.3 FIX (B): staff_courses has no is_active column — removed filter + added error logs
+// ⭐ v3.16: Attendance follows substitute — assign/unassign swap session_attendance.attendee_id
 import { supabase } from './supabaseClient';
 
 export type SessionType =
@@ -1131,7 +1132,7 @@ export async function findQualifiedSubstitutes(
 }
 
 // ==========================================
-// ASSIGN / UNASSIGN
+// ASSIGN / UNASSIGN — ⭐ v3.16 attendance sync
 // ==========================================
 
 export async function assignSubstitute(params: {
@@ -1152,8 +1153,22 @@ export async function assignSubstitute(params: {
       session_id,
     });
 
+    // ── Step 1: fetch the assignment to get original_teacher_id ──
+    const { data: assignment, error: fetchErr } = await supabase
+      .from('substitute_assignments')
+      .select('original_teacher_id')
+      .eq('id', assignment_id)
+      .single();
+
+    if (fetchErr || !assignment) {
+      console.error('Error fetching substitute assignment:', fetchErr);
+      return { success: false, error: fetchErr?.message || 'Assignment not found' };
+    }
+
+    const originalTeacherId = assignment.original_teacher_id;
     const now = new Date().toISOString();
 
+    // ── Step 2: update substitute_assignments ──
     const { error: assignError } = await supabase
       .from('substitute_assignments')
       .update({
@@ -1172,6 +1187,7 @@ export async function assignSubstitute(params: {
       return { success: false, error: assignError.message };
     }
 
+    // ── Step 3: update the session row ──
     const table =
       session_type === 'group_session' ? 'group_class_sessions' :
       session_type === 'private_session' ? 'bookings' :
@@ -1194,7 +1210,25 @@ export async function assignSubstitute(params: {
       };
     }
 
-    console.log('✅ Substitute assigned successfully');
+    // ── Step 4 (⭐ v3.16): swap the attendance row to the substitute ──
+    const syncResult = await syncTeacherAttendanceToSubstitute({
+      session_type,
+      session_id,
+      original_teacher_id: originalTeacherId,
+      substitute_teacher_id,
+      actor_id: assigned_by || null,
+    });
+
+    if (!syncResult.success) {
+      console.warn('⚠️ Substitute assigned but attendance sync failed:', syncResult.error);
+      // Do NOT fail the whole operation — the assignment is more important than the sync.
+      return {
+        success: true,
+        error: `Assignment saved, but attendance sync failed: ${syncResult.error}`,
+      };
+    }
+
+    console.log(`✅ Substitute assigned successfully (attendance ${syncResult.action})`);
     return { success: true };
   } catch (err: any) {
     console.error('❌ Exception in assignSubstitute:', err);
@@ -1213,6 +1247,20 @@ export async function unassignSubstitute(params: {
   try {
     console.log('🔄 Un-assigning substitute:', { assignment_id, reason });
 
+    // ── Step 1: fetch original_teacher_id ──
+    const { data: assignment, error: fetchErr } = await supabase
+      .from('substitute_assignments')
+      .select('original_teacher_id')
+      .eq('id', assignment_id)
+      .single();
+
+    if (fetchErr || !assignment) {
+      return { success: false, error: fetchErr?.message || 'Assignment not found' };
+    }
+
+    const originalTeacherId = assignment.original_teacher_id;
+
+    // ── Step 2: update substitute_assignments ──
     const { error: assignError } = await supabase
       .from('substitute_assignments')
       .update({
@@ -1229,6 +1277,7 @@ export async function unassignSubstitute(params: {
       return { success: false, error: assignError.message };
     }
 
+    // ── Step 3: reset the session row ──
     const table =
       session_type === 'group_session' ? 'group_class_sessions' :
       session_type === 'private_session' ? 'bookings' :
@@ -1247,9 +1296,189 @@ export async function unassignSubstitute(params: {
       console.warn('Could not reset session row:', sessionError);
     }
 
+    // ── Step 4 (⭐ v3.16): restore the attendance row to the original teacher ──
+    const syncResult = await syncTeacherAttendanceToOriginal({
+      session_type,
+      session_id,
+      original_teacher_id: originalTeacherId,
+    });
+
+    if (!syncResult.success) {
+      console.warn('⚠️ Unassigned but attendance restore failed:', syncResult.error);
+      return {
+        success: true,
+        error: `Unassigned, but attendance restore failed: ${syncResult.error}`,
+      };
+    }
+
+    console.log(`✅ Substitute unassigned (attendance ${syncResult.action})`);
     return { success: true };
   } catch (err: any) {
     console.error('❌ Exception in unassignSubstitute:', err);
     return { success: false, error: err.message };
+  }
+}
+
+// ==========================================
+// v3.16 — ATTENDANCE FOLLOWS SUBSTITUTE
+// ==========================================
+
+/**
+ * When a substitute is assigned, the attendance row for the session must
+ * follow the sub — otherwise the Teacher Hours Report pays the wrong person.
+ *
+ * - Swaps session_attendance.attendee_id from original teacher → sub
+ * - Stores original in original_attendee_id (for audit)
+ * - Clears any existing payroll override (it belonged to the original)
+ * - If no attendance row exists yet, creates one for the sub as 'expected'
+ *
+ * Safe to call even if nothing needs to change.
+ */
+export async function syncTeacherAttendanceToSubstitute(params: {
+  session_type: SessionType;
+  session_id: string;
+  original_teacher_id: string | null;
+  substitute_teacher_id: string;
+  actor_id?: string | null;
+}): Promise<{ success: boolean; action: 'updated' | 'created' | 'noop'; error?: string }> {
+  const { session_type, session_id, original_teacher_id, substitute_teacher_id, actor_id } = params;
+
+  // Map substituteService session types → attendance session types
+  const attendanceSessionType: 'booking' | 'group_session' | 'trial_booking' =
+    session_type === 'group_session' ? 'group_session' :
+    session_type === 'private_session' ? 'booking' :
+    'trial_booking';
+
+  try {
+    // Find the existing teacher row
+    const { data: existing, error: fetchErr } = await supabase
+      .from('session_attendance')
+      .select('id, attendee_id, original_attendee_id, is_rendered, override_reason')
+      .eq('session_type', attendanceSessionType)
+      .eq('session_id', session_id)
+      .eq('attendee_type', 'teacher')
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error('[syncTeacherAttendanceToSubstitute] fetch failed:', fetchErr);
+      return { success: false, action: 'noop', error: fetchErr.message };
+    }
+
+    // No row yet → create one for the sub as 'expected'
+    if (!existing) {
+      const { error: insertErr } = await supabase
+        .from('session_attendance')
+        .insert({
+          session_type: attendanceSessionType,
+          session_id,
+          attendee_type: 'teacher',
+          attendee_id: substitute_teacher_id,
+          original_attendee_id: original_teacher_id,
+          status: 'expected',
+          substituted_at: new Date().toISOString(),
+          substituted_by: actor_id || null,
+        });
+
+      if (insertErr) {
+        console.error('[syncTeacherAttendanceToSubstitute] insert failed:', insertErr);
+        return { success: false, action: 'noop', error: insertErr.message };
+      }
+      return { success: true, action: 'created' };
+    }
+
+    // Row already points at the sub → no-op (but keep audit cols fresh)
+    if (existing.attendee_id === substitute_teacher_id) {
+      return { success: true, action: 'noop' };
+    }
+
+    // Swap: original → sub
+    const { error: updateErr } = await supabase
+      .from('session_attendance')
+      .update({
+        attendee_id: substitute_teacher_id,
+        original_attendee_id: existing.original_attendee_id || existing.attendee_id,
+        substituted_at: new Date().toISOString(),
+        substituted_by: actor_id || null,
+        // Clear any payroll override — it was for the original teacher
+        is_rendered: null,
+        override_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+
+    if (updateErr) {
+      console.error('[syncTeacherAttendanceToSubstitute] update failed:', updateErr);
+      return { success: false, action: 'noop', error: updateErr.message };
+    }
+
+    console.log(`✅ Attendance ${existing.id} swapped to substitute ${substitute_teacher_id}`);
+    return { success: true, action: 'updated' };
+  } catch (err: any) {
+    console.error('[syncTeacherAttendanceToSubstitute] exception:', err);
+    return { success: false, action: 'noop', error: err.message };
+  }
+}
+
+/**
+ * Reverse of the above: when a substitute is unassigned, restore the
+ * attendance row to the original teacher.
+ */
+export async function syncTeacherAttendanceToOriginal(params: {
+  session_type: SessionType;
+  session_id: string;
+  original_teacher_id: string | null;
+}): Promise<{ success: boolean; action: 'updated' | 'noop'; error?: string }> {
+  const { session_type, session_id, original_teacher_id } = params;
+
+  if (!original_teacher_id) {
+    return { success: true, action: 'noop' };
+  }
+
+  const attendanceSessionType: 'booking' | 'group_session' | 'trial_booking' =
+    session_type === 'group_session' ? 'group_session' :
+    session_type === 'private_session' ? 'booking' :
+    'trial_booking';
+
+  try {
+    const { data: existing, error: fetchErr } = await supabase
+      .from('session_attendance')
+      .select('id, attendee_id, original_attendee_id')
+      .eq('session_type', attendanceSessionType)
+      .eq('session_id', session_id)
+      .eq('attendee_type', 'teacher')
+      .maybeSingle();
+
+    if (fetchErr) {
+      return { success: false, action: 'noop', error: fetchErr.message };
+    }
+    if (!existing) {
+      return { success: true, action: 'noop' };
+    }
+    if (existing.attendee_id === original_teacher_id) {
+      return { success: true, action: 'noop' };
+    }
+
+    const { error: updateErr } = await supabase
+      .from('session_attendance')
+      .update({
+        attendee_id: original_teacher_id,
+        original_attendee_id: null,
+        substituted_at: null,
+        substituted_by: null,
+        is_rendered: null,
+        override_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+
+    if (updateErr) {
+      return { success: false, action: 'noop', error: updateErr.message };
+    }
+
+    console.log(`✅ Attendance ${existing.id} restored to original teacher ${original_teacher_id}`);
+    return { success: true, action: 'updated' };
+  } catch (err: any) {
+    console.error('[syncTeacherAttendanceToOriginal] exception:', err);
+    return { success: false, action: 'noop', error: err.message };
   }
 }

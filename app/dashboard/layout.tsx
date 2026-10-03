@@ -70,6 +70,14 @@ const menuItems: MenuItem[] = [
     ]
   },
   {
+  title: 'Reports',
+  icon: '📊' ,
+  children: [
+    { href: '/dashboard/reports',          title: 'All Reports'},
+    { href: '/dashboard/reports/teachers', title: 'Teacher Hours'},
+  ],
+  },
+  {
     title: 'Settings',
     icon: '⚙️',
     children: [

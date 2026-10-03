@@ -94,3 +94,12 @@ export function formatLocalDate(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
+
+/**
+ * Compute hours between two "HH:mm" strings (exact, no rounding).
+ */
+export function hoursBetween(startHHMM: string, endHHMM: string): number {
+  const [sh, sm] = startHHMM.split(':').map(Number);
+  const [eh, em] = endHHMM.split(':').map(Number);
+  return ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+}

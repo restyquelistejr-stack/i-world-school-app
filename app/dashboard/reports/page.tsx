@@ -1,30 +1,30 @@
-'use client';
+// app/dashboard/reports/page.tsx
 
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+'use client'
+
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabaseClient'
 
 export default function ReportsPage() {
-  const [loading, setLoading] = useState(true);
-  const [totalStudents, setTotalStudents] = useState(0);
-  const [totalTeachers, setTotalTeachers] = useState(0);
-  const [totalClasses, setTotalClasses] = useState(0);
-  const [totalEnrollments, setTotalEnrollments] = useState(0);
-  const [pendingPayments, setPendingPayments] = useState(0);
-  const [paidPayments, setPaidPayments] = useState(0);
-  const [classesByStatus, setClassesByStatus] = useState<Record<string, number>>({});
-  const [recentEnrollments, setRecentEnrollments] = useState<any[]>([]);
-  const [students, setStudents] = useState<any[]>([]);
-  const [subjects, setSubjects] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true)
+  const [totalStudents, setTotalStudents] = useState(0)
+  const [totalTeachers, setTotalTeachers] = useState(0)
+  const [totalClasses, setTotalClasses] = useState(0)
+  const [totalEnrollments, setTotalEnrollments] = useState(0)
+  const [pendingPayments, setPendingPayments] = useState(0)
+  const [paidPayments, setPaidPayments] = useState(0)
+  const [classesByStatus, setClassesByStatus] = useState<Record<string, number>>({})
+  const [recentEnrollments, setRecentEnrollments] = useState<any[]>([])
+  const [students, setStudents] = useState<any[]>([])
+  const [subjects, setSubjects] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    loadReports();
-  }, []);
+    loadReports()
+  }, [])
 
   async function loadReports() {
-    setLoading(true);
-    
+    setLoading(true)
     try {
-      // 1. Get counts
       const [
         studentsRes,
         teachersRes,
@@ -33,7 +33,7 @@ export default function ReportsPage() {
         pendingRes,
         paidRes,
         classesStatusRes,
-        recentRes
+        recentRes,
       ] = await Promise.all([
         supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'student'),
         supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'teacher'),
@@ -42,21 +42,15 @@ export default function ReportsPage() {
         supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('payment_status', 'pending'),
         supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('payment_status', 'paid'),
         supabase.from('classes').select('status'),
-        supabase.from('enrollments')
-          .select('*')
-          .order('enrollment_date', { ascending: false })
-          .limit(10)
-      ]);
+        supabase.from('enrollments').select('*').order('enrollment_date', { ascending: false }).limit(10),
+      ])
 
-      // 2. Get students for display
       const { data: studentsData } = await supabase
         .from('users')
         .select('id, full_name')
-        .eq('role', 'student');
+        .eq('role', 'student')
+      setStudents(studentsData || [])
 
-      setStudents(studentsData || []);
-
-      // 3. Get classes with subject names for display
       const { data: classesData } = await supabase
         .from('classes')
         .select(`
@@ -64,37 +58,33 @@ export default function ReportsPage() {
           subjects:subjects (
             name
           )
-        `);
+        `)
 
-      // Create a map of class_id -> subject_name
-      const subjectMap: Record<string, string> = {};
-      (classesData || []).forEach((cls: any) => {
-        subjectMap[cls.id] = cls.subjects?.name || 'Unknown';
-      });
-      setSubjects(subjectMap);
+      const subjectMap: Record<string, string> = {}
+      ;(classesData || []).forEach((cls: any) => {
+        subjectMap[cls.id] = cls.subjects?.name || 'Unknown'
+      })
+      setSubjects(subjectMap)
 
-      // 4. Count classes by status
-      const statusCounts: Record<string, number> = {};
-      (classesStatusRes.data || []).forEach((c: any) => {
-        const status = c.status || 'unknown';
-        statusCounts[status] = (statusCounts[status] || 0) + 1;
-      });
+      const statusCounts: Record<string, number> = {}
+      ;(classesStatusRes.data || []).forEach((c: any) => {
+        const status = c.status || 'unknown'
+        statusCounts[status] = (statusCounts[status] || 0) + 1
+      })
 
-      setTotalStudents(studentsRes.count || 0);
-      setTotalTeachers(teachersRes.count || 0);
-      setTotalClasses(classesRes.count || 0);
-      setTotalEnrollments(enrollmentsRes.count || 0);
-      setPendingPayments(pendingRes.count || 0);
-      setPaidPayments(paidRes.count || 0);
-      setClassesByStatus(statusCounts);
-      setRecentEnrollments(recentRes.data || []);
-
+      setTotalStudents(studentsRes.count || 0)
+      setTotalTeachers(teachersRes.count || 0)
+      setTotalClasses(classesRes.count || 0)
+      setTotalEnrollments(enrollmentsRes.count || 0)
+      setPendingPayments(pendingRes.count || 0)
+      setPaidPayments(paidRes.count || 0)
+      setClassesByStatus(statusCounts)
+      setRecentEnrollments(recentRes.data || [])
     } catch (error) {
-      console.error('Error loading reports:', error);
-      alert('Failed to load reports');
+      console.error('Error loading reports:', error)
+      alert('Failed to load reports')
     }
-    
-    setLoading(false);
+    setLoading(false)
   }
 
   function getStatusColor(status: string) {
@@ -104,17 +94,17 @@ export default function ReportsPage() {
       full: 'bg-yellow-100 text-yellow-800',
       completed: 'bg-blue-100 text-blue-800',
       cancelled: 'bg-red-100 text-red-800',
-    };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    }
+    return colors[status] || 'bg-gray-100 text-gray-800'
   }
 
   function getStudentName(studentId: string): string {
-    const student = students.find(s => s.id === studentId);
-    return student?.full_name || studentId || 'N/A';
+    const student = students.find(s => s.id === studentId)
+    return student?.full_name || studentId || 'N/A'
   }
 
   function getSubjectName(classId: string): string {
-    return subjects[classId] || classId || 'N/A';
+    return subjects[classId] || classId || 'N/A'
   }
 
   if (loading) {
@@ -122,7 +112,7 @@ export default function ReportsPage() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-lg">Loading reports...</div>
       </div>
-    );
+    )
   }
 
   return (
@@ -138,7 +128,6 @@ export default function ReportsPage() {
           </button>
         </div>
 
-        {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="text-sm text-gray-500">Total Students</div>
@@ -158,7 +147,6 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* Payment Summary */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow-lg p-6">
             <h3 className="text-lg font-semibold mb-2">Payment Status</h3>
@@ -192,7 +180,6 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* Recent Enrollments */}
         <div className="bg-white rounded-lg shadow-lg overflow-hidden">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Recent Enrollments</h3>
@@ -204,26 +191,16 @@ export default function ReportsPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Student
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Class
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Enrolled
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Enrolled</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {recentEnrollments.map((enrollment: any) => (
                     <tr key={enrollment.id}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStudentName(enrollment.student_id)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getSubjectName(enrollment.class_id)}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">{getStudentName(enrollment.student_id)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{getSubjectName(enrollment.class_id)}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {new Date(enrollment.enrollment_date).toLocaleDateString()}
                       </td>
@@ -236,5 +213,5 @@ export default function ReportsPage() {
         </div>
       </div>
     </div>
-  );
+  )
 }

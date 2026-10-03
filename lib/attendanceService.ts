@@ -2,6 +2,7 @@
 // ⭐ v3.14c: All attendance creators are idempotent (upsert with ignoreDuplicates)
 // - Prevents duplicate rows even if the code path runs twice (React re-renders, retries, parallel calls)
 // - Relies on the UNIQUE constraint: (session_type, session_id, attendee_type, attendee_id)
+// ⭐ v3.15: Added is_rendered + override_reason for the Teacher Hours Report (payroll truth)
 import { supabase } from '@/lib/supabaseClient';
 
 export type SessionType = 'booking' | 'group_session' | 'trial_booking';
@@ -26,6 +27,9 @@ export interface AttendanceRow {
   marked_at: string | null;
   marked_by: string | null;
   notes: string | null;
+  // ⭐ v3.15 — payroll override (teacher rows only, but stored on the row itself)
+  is_rendered: boolean | null;
+  override_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -285,6 +289,12 @@ export interface MarkAttendanceInput {
   status: AttendanceStatus;
   notes?: string;
   actor_id?: string;
+  // ⭐ v3.15 — payroll override
+  //   undefined → leave column untouched
+  //   null      → clear override (back to auto)
+  //   true/false → set override explicitly
+  is_rendered?: boolean | null;
+  override_reason?: string | null;
 }
 
 export async function markAttendance(
@@ -292,21 +302,24 @@ export async function markAttendance(
 ): Promise<{ success: boolean; error?: string }> {
   const now = new Date().toISOString();
 
+  const row: Record<string, unknown> = {
+    session_type: input.session_type,
+    session_id: input.session_id,
+    attendee_type: input.attendee_type,
+    attendee_id: input.attendee_id,
+    status: input.status,
+    marked_at: now,
+    marked_by: input.actor_id || null,
+    notes: input.notes || null,
+  };
+
+  // ⭐ v3.15 — only include override columns when caller passed them
+  if (input.is_rendered !== undefined) row.is_rendered = input.is_rendered;
+  if (input.override_reason !== undefined) row.override_reason = input.override_reason;
+
   const { error } = await supabase
     .from('session_attendance')
-    .upsert(
-      {
-        session_type: input.session_type,
-        session_id: input.session_id,
-        attendee_type: input.attendee_type,
-        attendee_id: input.attendee_id,
-        status: input.status,
-        marked_at: now,
-        marked_by: input.actor_id || null,
-        notes: input.notes || null,
-      },
-      { onConflict: ATTENDANCE_CONFLICT_KEY }
-    );
+    .upsert(row, { onConflict: ATTENDANCE_CONFLICT_KEY });
 
   return error ? { success: false, error: error.message } : { success: true };
 }
@@ -316,7 +329,7 @@ export async function markAttendanceBulk(
 ): Promise<{ success: boolean; error?: string; count?: number }> {
   if (inputs.length === 0) return { success: true, count: 0 };
 
-  // ⭐ Dedupe by unique key in case the same attendee is passed twice
+  // Dedupe by unique key in case the same attendee is passed twice
   const seen = new Set<string>();
   const deduped = inputs.filter(i => {
     const key = `${i.session_type}|${i.session_id}|${i.attendee_type}|${i.attendee_id}`;
@@ -326,16 +339,22 @@ export async function markAttendanceBulk(
   });
 
   const now = new Date().toISOString();
-  const rows = deduped.map(i => ({
-    session_type: i.session_type,
-    session_id: i.session_id,
-    attendee_type: i.attendee_type,
-    attendee_id: i.attendee_id,
-    status: i.status,
-    marked_at: now,
-    marked_by: i.actor_id || null,
-    notes: i.notes || null,
-  }));
+  const rows = deduped.map(i => {
+    const r: Record<string, unknown> = {
+      session_type: i.session_type,
+      session_id: i.session_id,
+      attendee_type: i.attendee_type,
+      attendee_id: i.attendee_id,
+      status: i.status,
+      marked_at: now,
+      marked_by: i.actor_id || null,
+      notes: i.notes || null,
+    };
+    // ⭐ v3.15 — only include override columns when caller passed them
+    if (i.is_rendered !== undefined) r.is_rendered = i.is_rendered;
+    if (i.override_reason !== undefined) r.override_reason = i.override_reason;
+    return r;
+  });
 
   const { error } = await supabase
     .from('session_attendance')
