@@ -61,6 +61,7 @@ export function classifyClass(row: {
   if (row.is_deleted) return 'archived';
   if (row.status === 'cancelled') return 'cancelled';
   if (row.status === 'completed') return 'completed';
+  if (row.status === 'converted') return 'completed';   // ⭐ v3.19 — converted trials are done
   if (row.end_date && row.end_date < today()) return 'past';
   return 'active';
 }

@@ -51,8 +51,8 @@ const menuItems: MenuItem[] = [
      // { title: 'Dashboard', href: '/dashboard/staff' },
       { title: 'Directory', href: '/dashboard/staff/list' },
       { title: 'Teachers', href: '/dashboard/staff/teachers' },
-     // { title: 'Teacher Matching', href: '/dashboard/staff/matching' },
-     // { title: 'Attendance', href: '/dashboard/staff/attendance' },
+      { title: 'Teachers Calendar', href: '/dashboard/staff/teachers/calendar' },
+      { title: 'Attendance', href: '/dashboard/staff/attendance' },
     ]
   },
   {

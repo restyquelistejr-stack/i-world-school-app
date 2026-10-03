@@ -93,10 +93,17 @@ export default function ManageClasses() {
   const [hintDismissed, setHintDismissed] = useState(false);
 
   // ⭐ v3.14: persistent status bucket filter
-  const { active: activeBuckets, toggle: toggleBucket } = useStatusFilter(
+  const { active: activeBuckets, toggle: toggleBucket, reset: resetBuckets } = useStatusFilter(
     'management.classes.buckets',
     ['active']
   );
+
+  // ⭐ v3.19 — Always start with Active only on page load
+  // (localStorage persistence was causing stale filters to stick)
+  useEffect(() => {
+    resetBuckets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     loadData();

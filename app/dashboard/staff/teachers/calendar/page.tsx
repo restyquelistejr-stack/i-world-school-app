@@ -1,8 +1,20 @@
+// app/dashboard/staff/teachers/calendar/page.tsx
+// ⭐ v3.19 — Week/day navigation + working View Teacher filter (URL-driven)
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { format, parseISO, isToday, isTomorrow, isThisWeek } from 'date-fns';
+import {
+  format,
+  parseISO,
+  isToday,
+  isTomorrow,
+  startOfWeek,
+  addDays,
+  addWeeks,
+  subWeeks,
+} from 'date-fns';
 import Link from 'next/link';
 
 interface Teacher {
@@ -31,66 +43,99 @@ interface DailySchedule {
   bookings: BookingWithDetails[];
 }
 
-export default function AdminCalendarPage() {
+function AdminCalendarContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // URL-driven state
+  const viewMode = (searchParams.get('view') as 'today' | 'week') || 'today';
+  const selectedTeacher = searchParams.get('teacher') || 'all';
+  const anchorDateStr = searchParams.get('date');   // YYYY-MM-DD
+
   const [teachers, setTeachers] = useState<Teacher[]>([]);
-  const [selectedTeacher, setSelectedTeacher] = useState<string>('all');
   const [schedules, setSchedules] = useState<DailySchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'today' | 'week'>('today');
   const [selectedBooking, setSelectedBooking] = useState<BookingWithDetails | null>(null);
+
+  const anchorDate = anchorDateStr ? parseISO(anchorDateStr) : new Date();
+
+  // Push a new URL state
+  const setUrlState = useCallback((next: {
+    view?: 'today' | 'week';
+    teacher?: string;
+    date?: string;
+  }) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next.view !== undefined) params.set('view', next.view);
+    if (next.teacher !== undefined) {
+      if (next.teacher === 'all') params.delete('teacher');
+      else params.set('teacher', next.teacher);
+    }
+    if (next.date !== undefined) params.set('date', next.date);
+    router.push(`/dashboard/staff/teachers/calendar?${params.toString()}`);
+  }, [router, searchParams]);
+
+  const navigate = (direction: 'prev' | 'next') => {
+    if (viewMode === 'week') {
+      const next = direction === 'next' ? addWeeks(anchorDate, 1) : subWeeks(anchorDate, 1);
+      setUrlState({ date: format(next, 'yyyy-MM-dd') });
+    } else {
+      const next = addDays(anchorDate, direction === 'next' ? 1 : -1);
+      setUrlState({ date: format(next, 'yyyy-MM-dd') });
+    }
+  };
+
+  const goToToday = () => {
+    setUrlState({ date: format(new Date(), 'yyyy-MM-dd') });
+  };
 
   useEffect(() => {
     loadTeachersAndSchedules();
-  }, [selectedTeacher, viewMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTeacher, viewMode, anchorDateStr]);
 
   async function loadTeachersAndSchedules() {
     setLoading(true);
     setErrorMessage(null);
 
     try {
-      // 1. Load all teachers
-      const { data: teachersData, error: teachersError } = await supabase
-        .from('users')
-        .select('id, full_name, email, phone')
-        .eq('role', 'teacher')
-        .order('full_name');
+      // 1. Load all teachers (once)
+      if (teachers.length === 0) {
+        const { data: teachersData, error: teachersError } = await supabase
+          .from('users')
+          .select('id, full_name, email, phone')
+          .eq('role', 'teacher')
+          .order('full_name');
 
-      if (teachersError) throw teachersError;
-      setTeachers(teachersData || []);
+        if (teachersError) throw teachersError;
+        setTeachers(teachersData || []);
+      }
 
-      // 2. Calculate date range
+      // 2. Calculate date range from anchor
       let startDate: Date, endDate: Date;
       if (viewMode === 'today') {
-        const today = new Date();
-        startDate = new Date(today);
+        startDate = new Date(anchorDate);
         startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today);
+        endDate = new Date(anchorDate);
         endDate.setHours(23, 59, 59, 999);
       } else {
-        // Week view - current week
-        const today = new Date();
-        const dayOfWeek = today.getDay();
-        const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-        startDate = new Date(today);
-        startDate.setDate(diff);
+        const ws = startOfWeek(anchorDate, { weekStartsOn: 1 });
+        startDate = new Date(ws);
         startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(startDate);
-        endDate.setDate(endDate.getDate() + 6);
+        endDate = addDays(ws, 6);
         endDate.setHours(23, 59, 59, 999);
       }
 
       const startDateStr = format(startDate, 'yyyy-MM-dd');
       const endDateStr = format(endDate, 'yyyy-MM-dd');
 
-      console.log('Date range:', { startDateStr, endDateStr });
-
-      // 3. Get all bookings in date range
+      // 3. Get bookings in range (note: bookings.start_time is TEXT)
       let query = supabase
         .from('bookings')
         .select('*')
-        .gte('start_time', startDateStr)
-        .lte('start_time', endDateStr)
+        .gte('start_time', `${startDateStr}T00:00:00`)
+        .lte('start_time', `${endDateStr}T23:59:59`)
         .in('status', ['confirmed', 'in_progress', 'pending'])
         .order('start_time', { ascending: true });
 
@@ -99,112 +144,82 @@ export default function AdminCalendarPage() {
       }
 
       const { data: bookingsData, error: bookingsError } = await query;
-
       if (bookingsError) throw bookingsError;
 
-      console.log('Found bookings:', bookingsData?.length || 0);
+      // 4. Enrich with course/room/teacher/students in bulk
+      const bookings = bookingsData || [];
+      const courseIds = [...new Set(bookings.map(b => b.course_id).filter(Boolean))];
+      const roomIds = [...new Set(bookings.map(b => b.room_id).filter(Boolean))];
+      const teacherIds = [...new Set(bookings.map(b => b.teacher_id).filter(Boolean))];
+      const classIds = [...new Set(bookings.map(b => b.class_id).filter(Boolean))];
 
-      // 4. Enrich bookings with related data
-      const enrichedBookings = await Promise.all(
-        (bookingsData || []).map(async (booking) => {
-          // Get course name
-          let courseName = 'Unknown Course';
-          if (booking.course_id) {
-            const { data: courseData } = await supabase
-              .from('courses')
-              .select('name')
-              .eq('id', booking.course_id)
-              .single();
-            if (courseData) courseName = courseData.name;
-          }
+      const [coursesRes, roomsRes, teachersRes, classesRes] = await Promise.all([
+        courseIds.length
+          ? supabase.from('courses').select('id, name').in('id', courseIds)
+          : Promise.resolve({ data: [] as any[] }),
+        roomIds.length
+          ? supabase.from('rooms').select('id, name').in('id', roomIds)
+          : Promise.resolve({ data: [] as any[] }),
+        teacherIds.length
+          ? supabase.from('users').select('id, full_name').in('id', teacherIds)
+          : Promise.resolve({ data: [] as any[] }),
+        classIds.length
+          ? supabase.from('classes').select('id, class_code').in('id', classIds)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
 
-          // Get room name
-          let roomName = 'TBD';
-          if (booking.room_id) {
-            const { data: roomData } = await supabase
-              .from('rooms')
-              .select('name')
-              .eq('id', booking.room_id)
-              .single();
-            if (roomData) roomName = roomData.name;
-          }
+      const courseMap = Object.fromEntries((coursesRes.data || []).map((c: any) => [c.id, c.name]));
+      const roomMap = Object.fromEntries((roomsRes.data || []).map((r: any) => [r.id, r.name]));
+      const teacherMap = Object.fromEntries((teachersRes.data || []).map((t: any) => [t.id, t.full_name]));
+      const classCodeMap = Object.fromEntries((classesRes.data || []).map((c: any) => [c.id, c.class_code]));
 
-          // Get teacher name
-          let teacherName = 'TBD';
-          if (booking.teacher_id) {
-            const { data: teacherData } = await supabase
-              .from('users')
-              .select('full_name')
-              .eq('id', booking.teacher_id)
-              .single();
-            if (teacherData) teacherName = teacherData.full_name;
-          }
+      // Enrollments per class
+      let enrollmentsByClass: Record<string, { id: string; full_name: string }[]> = {};
+      if (classIds.length) {
+        const { data: enrollments } = await supabase
+          .from('class_enrollments')
+          .select(`class_id, student_id, student:student_id ( id, full_name )`)
+          .in('class_id', classIds)
+          .eq('status', 'active');
 
-          // Get class code
-          let classCode = 'N/A';
-          if (booking.class_id) {
-            const { data: classData } = await supabase
-              .from('classes')
-              .select('class_code')
-              .eq('id', booking.class_id)
-              .single();
-            if (classData) classCode = classData.class_code;
-          }
+        (enrollments || []).forEach((e: any) => {
+          if (!enrollmentsByClass[e.class_id]) enrollmentsByClass[e.class_id] = [];
+          enrollmentsByClass[e.class_id].push({
+            id: e.student?.id || e.student_id,
+            full_name: e.student?.full_name || 'Unknown Student',
+          });
+        });
+      }
 
-          // Get students enrolled in this class
-          let students: { id: string; full_name: string }[] = [];
-          let studentCount = 0;
-          if (booking.class_id) {
-            const { data: enrollments } = await supabase
-              .from('class_enrollments')
-              .select(`
-                student_id,
-                student:student_id ( id, full_name )
-              `)
-              .eq('class_id', booking.class_id);
-
-            if (enrollments) {
-              students = enrollments.map((e: any) => ({
-                id: e.student_id,
-                full_name: e.student?.full_name || 'Unknown Student'
-              }));
-              studentCount = students.length;
-            }
-          }
-
-          return {
-            ...booking,
-            course_name: courseName,
-            room_name: roomName,
-            teacher_name: teacherName,
-            class_code: classCode,
-            student_count: studentCount,
-            students: students
-          };
-        })
-      );
-
-      // 5. Group by date
-      const groupedByDate: { [key: string]: BookingWithDetails[] } = {};
-      enrichedBookings.forEach((booking) => {
-        const dateKey = booking.start_time.split('T')[0] || booking.start_time;
-        if (!groupedByDate[dateKey]) {
-          groupedByDate[dateKey] = [];
-        }
-        groupedByDate[dateKey].push(booking);
+      const enrichedBookings: BookingWithDetails[] = bookings.map((b: any) => {
+        const students = b.class_id ? (enrollmentsByClass[b.class_id] || []) : [];
+        return {
+          ...b,
+          course_name: courseMap[b.course_id] || 'Unknown Course',
+          room_name: roomMap[b.room_id] || 'TBD',
+          teacher_name: teacherMap[b.teacher_id] || 'TBD',
+          class_code: classCodeMap[b.class_id] || 'N/A',
+          student_count: students.length,
+          students,
+        };
       });
 
-      const scheduleArray: DailySchedule[] = Object.keys(groupedByDate)
+      // 5. Group by date
+      const grouped: Record<string, BookingWithDetails[]> = {};
+      enrichedBookings.forEach(b => {
+        const dateKey = b.start_time.split('T')[0];
+        if (!grouped[dateKey]) grouped[dateKey] = [];
+        grouped[dateKey].push(b);
+      });
+
+      const scheduleArray: DailySchedule[] = Object.keys(grouped)
         .sort()
-        .map((date) => ({
+        .map(date => ({
           date,
-          bookings: groupedByDate[date].sort((a, b) => 
-            a.start_time.localeCompare(b.start_time)
-          )
+          bookings: grouped[date].sort((a, b) => a.start_time.localeCompare(b.start_time)),
         }));
 
       setSchedules(scheduleArray);
-
     } catch (error: any) {
       console.error('Error loading data:', error);
       setErrorMessage(error?.message || 'Failed to load schedule');
@@ -236,13 +251,22 @@ export default function AdminCalendarPage() {
   };
 
   const formatDateHeader = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const date = parseISO(dateStr);
     if (isToday(date)) return 'Today';
     if (isTomorrow(date)) return 'Tomorrow';
-    return format(date, 'EEE, MMM d');
+    return format(date, 'EEE, MMM d, yyyy');
   };
 
-  if (loading) {
+  const periodLabel = (() => {
+    if (viewMode === 'week') {
+      const ws = startOfWeek(anchorDate, { weekStartsOn: 1 });
+      const we = addDays(ws, 6);
+      return `${format(ws, 'MMM d')} – ${format(we, 'MMM d, yyyy')}`;
+    }
+    return format(anchorDate, 'EEEE, MMM d, yyyy');
+  })();
+
+  if (loading && schedules.length === 0) {
     return (
       <div className="p-6 flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -255,8 +279,8 @@ export default function AdminCalendarPage() {
       <div className="p-6 max-w-4xl mx-auto">
         <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
           <p className="text-red-600 font-medium">⚠️ {errorMessage}</p>
-          <button 
-            onClick={() => loadTeachersAndSchedules()} 
+          <button
+            onClick={() => loadTeachersAndSchedules()}
             className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Retry
@@ -269,50 +293,42 @@ export default function AdminCalendarPage() {
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
       {/* Header */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-4 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📅 Admin Schedule Dashboard</h1>
-          <p className="text-sm text-gray-500">
-            View all teachers and their classes
-          </p>
+          <p className="text-sm text-gray-500">View all teachers and their classes</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* View Mode Toggle */}
+          {/* View toggle */}
           <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
             <button
-              onClick={() => setViewMode('today')}
+              onClick={() => setUrlState({ view: 'today' })}
               className={`px-3 py-1.5 text-sm rounded-md transition ${
-                viewMode === 'today' 
-                  ? 'bg-white shadow text-gray-900' 
-                  : 'hover:bg-gray-200'
+                viewMode === 'today' ? 'bg-white shadow text-gray-900' : 'hover:bg-gray-200'
               }`}
             >
-              📅 Today
+              📅 Day
             </button>
             <button
-              onClick={() => setViewMode('week')}
+              onClick={() => setUrlState({ view: 'week' })}
               className={`px-3 py-1.5 text-sm rounded-md transition ${
-                viewMode === 'week' 
-                  ? 'bg-white shadow text-gray-900' 
-                  : 'hover:bg-gray-200'
+                viewMode === 'week' ? 'bg-white shadow text-gray-900' : 'hover:bg-gray-200'
               }`}
             >
               📆 Week
             </button>
           </div>
 
-          {/* Teacher Filter */}
+          {/* Teacher filter */}
           <select
             value={selectedTeacher}
-            onChange={(e) => setSelectedTeacher(e.target.value)}
+            onChange={(e) => setUrlState({ teacher: e.target.value })}
             className="px-3 py-1.5 border rounded-lg text-sm bg-white"
           >
             <option value="all">👥 All Teachers</option>
-            {teachers.map((teacher) => (
-              <option key={teacher.id} value={teacher.id}>
-                {teacher.full_name}
-              </option>
+            {teachers.map(t => (
+              <option key={t.id} value={t.id}>{t.full_name}</option>
             ))}
           </select>
 
@@ -323,6 +339,52 @@ export default function AdminCalendarPage() {
             🔄 Refresh
           </button>
         </div>
+      </div>
+
+      {/* Period navigator */}
+      <div className="flex flex-wrap items-center gap-3 mb-6 pb-4 border-b border-gray-200">
+        <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-sm border border-gray-200">
+          <button
+            onClick={goToToday}
+            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+              isToday(anchorDate)
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Today
+          </button>
+          <div className="w-px h-5 bg-gray-300 mx-1" />
+          <button
+            onClick={() => navigate('prev')}
+            className="px-2 py-1.5 text-sm rounded hover:bg-gray-100 text-gray-700"
+            title={viewMode === 'week' ? 'Previous week' : 'Previous day'}
+          >
+            ←
+          </button>
+          <span className="text-sm font-semibold text-gray-800 px-3 min-w-[200px] text-center">
+            {periodLabel}
+          </span>
+          <button
+            onClick={() => navigate('next')}
+            className="px-2 py-1.5 text-sm rounded hover:bg-gray-100 text-gray-700"
+            title={viewMode === 'week' ? 'Next week' : 'Next day'}
+          >
+            →
+          </button>
+        </div>
+
+        {selectedTeacher !== 'all' && (
+          <span className="text-xs text-gray-500 bg-blue-50 border border-blue-200 px-2 py-1 rounded-full">
+            Filtered: {teachers.find(t => t.id === selectedTeacher)?.full_name}
+            <button
+              onClick={() => setUrlState({ teacher: 'all' })}
+              className="ml-2 text-blue-600 hover:text-blue-800 font-bold"
+            >
+              ✕
+            </button>
+          </span>
+        )}
       </div>
 
       {/* Stats Summary */}
@@ -358,29 +420,25 @@ export default function AdminCalendarPage() {
         <div className="bg-white rounded-lg shadow p-12 text-center border border-gray-200">
           <p className="text-gray-500 text-lg">No classes scheduled for this period.</p>
           <p className="text-sm text-gray-400 mt-2">
-            {selectedTeacher !== 'all' 
-              ? 'This teacher has no classes in the selected period.' 
+            {selectedTeacher !== 'all'
+              ? 'This teacher has no classes in the selected period.'
               : 'No classes are scheduled in the selected period.'}
           </p>
         </div>
       ) : (
         <div className="space-y-6">
-          {schedules.map((day) => (
+          {schedules.map(day => (
             <div key={day.date} className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
-              {/* Day Header */}
               <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-                <h3 className="font-bold text-gray-900">
-                  {formatDateHeader(day.date)}
-                </h3>
+                <h3 className="font-bold text-gray-900">{formatDateHeader(day.date)}</h3>
                 <span className="text-sm text-gray-500">
                   {day.bookings.length} class{day.bookings.length !== 1 ? 'es' : ''}
                 </span>
               </div>
 
-              {/* Bookings for this day */}
               <div className="divide-y divide-gray-100">
-                {day.bookings.map((booking) => (
-                  <div 
+                {day.bookings.map(booking => (
+                  <div
                     key={booking.id}
                     className="p-4 hover:bg-gray-50 transition cursor-pointer"
                     onClick={() => setSelectedBooking(booking)}
@@ -388,9 +446,7 @@ export default function AdminCalendarPage() {
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-gray-900">
-                            {booking.course_name}
-                          </span>
+                          <span className="font-bold text-gray-900">{booking.course_name}</span>
                           <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded">
                             {booking.class_code}
                           </span>
@@ -398,7 +454,7 @@ export default function AdminCalendarPage() {
                             {getStatusBadge(booking.status)}
                           </span>
                         </div>
-                        
+
                         <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-gray-600">
                           <span>🧑‍🏫 {booking.teacher_name}</span>
                           <span>📍 {booking.room_name}</span>
@@ -406,34 +462,30 @@ export default function AdminCalendarPage() {
                           <span className="text-blue-600">👥 {booking.student_count} students</span>
                         </div>
 
-                        {/* Student list (expandable) */}
                         {booking.students.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
-                            {booking.students.slice(0, 5).map((student) => (
-                              <span 
-                                key={student.id}
-                                className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded"
-                              >
+                            {booking.students.slice(0, 5).map(student => (
+                              <span key={student.id} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
                                 {student.full_name}
                               </span>
                             ))}
                             {booking.students.length > 5 && (
-                              <span className="text-xs text-gray-500">
-                                +{booking.students.length - 5} more
-                              </span>
+                              <span className="text-xs text-gray-500">+{booking.students.length - 5} more</span>
                             )}
                           </div>
                         )}
                       </div>
 
                       <div className="flex gap-2">
-                        <Link
-                          href={`/dashboard/staff/teachers/calendar?id=${booking.teacher_id}`}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUrlState({ teacher: booking.teacher_id });
+                          }}
                           className="px-3 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
-                          onClick={(e) => e.stopPropagation()}
                         >
                           View Teacher
-                        </Link>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -444,7 +496,7 @@ export default function AdminCalendarPage() {
         </div>
       )}
 
-      {/* Booking Detail Modal */}
+      {/* Booking Detail Modal — unchanged from before */}
       {selectedBooking && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -453,16 +505,15 @@ export default function AdminCalendarPage() {
                 <h3 className="text-lg font-bold text-gray-900">Class Details</h3>
                 <p className="text-sm text-gray-500">{selectedBooking.class_code}</p>
               </div>
-              <button 
-                onClick={() => setSelectedBooking(null)} 
+              <button
+                onClick={() => setSelectedBooking(null)}
                 className="text-gray-400 hover:text-gray-600 text-xl"
               >
                 ✕
               </button>
             </div>
-            
+
             <div className="p-6 space-y-4">
-              {/* Class Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm text-gray-500">Course</div>
@@ -484,7 +535,6 @@ export default function AdminCalendarPage() {
                 </div>
               </div>
 
-              {/* Time */}
               <div className="border-t border-gray-100 pt-4">
                 <div className="text-sm text-gray-500">Schedule</div>
                 <div className="font-medium">
@@ -495,7 +545,6 @@ export default function AdminCalendarPage() {
                 </div>
               </div>
 
-              {/* Students */}
               <div className="border-t border-gray-100 pt-4">
                 <div className="flex justify-between items-center mb-2">
                   <div className="text-sm text-gray-500">Enrolled Students</div>
@@ -503,16 +552,13 @@ export default function AdminCalendarPage() {
                 </div>
                 {selectedBooking.students.length > 0 ? (
                   <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {selectedBooking.students.map((student) => (
-                      <div 
-                        key={student.id}
-                        className="flex items-center justify-between p-2 bg-gray-50 rounded hover:bg-gray-100"
-                      >
+                    {selectedBooking.students.map(student => (
+                      <div key={student.id} className="flex items-center justify-between p-2 bg-gray-50 rounded hover:bg-gray-100">
                         <span>{student.full_name}</span>
                         <Link
                           href={`/dashboard/students/enrollments?id=${student.id}`}
                           className="text-xs text-blue-600 hover:underline"
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={e => e.stopPropagation()}
                         >
                           View
                         </Link>
@@ -524,7 +570,6 @@ export default function AdminCalendarPage() {
                 )}
               </div>
 
-              {/* Actions */}
               <div className="border-t border-gray-100 pt-4 flex justify-end gap-2">
                 <button
                   onClick={() => setSelectedBooking(null)}
@@ -538,5 +583,20 @@ export default function AdminCalendarPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ⭐ Suspense wrapper — required for useSearchParams in Next 15/16 App Router
+import { Suspense } from 'react';
+
+export default function AdminCalendarPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    }>
+      <AdminCalendarContent />
+    </Suspense>
   );
 }
