@@ -1,9 +1,45 @@
 // app/dashboard/reports/page.tsx
-
+// ⭐ v3.19 — Moved Teacher Weekly Stats + 6-Week Trend here from Dashboard.
+//            Removed Classes by Status block.
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { supabase } from '@/lib/supabaseClient'
+
+// ⭐ v3.19 — Lazy-load the two chart components.
+// They're heavy (Recharts SVG) and would block the Reports page's first paint
+// if imported eagerly. Load them after the page is interactive.
+const TeacherWeeklyStats = dynamic(
+  () => import('./components/TeacherWeeklyStats'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-xl border border-gray-100 bg-white p-4">
+        <div className="h-6 bg-gray-200 rounded w-1/4 mb-4 animate-pulse"></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map(i => (
+            <div key={i} className="h-40 bg-gray-100 rounded animate-pulse"></div>
+          ))}
+        </div>
+      </div>
+    ),
+  }
+)
+
+const SixWeekTrend = dynamic(
+  () => import('./components/SixWeekTrend'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-xl border border-gray-100 bg-white p-4">
+        <div className="h-6 bg-gray-200 rounded w-1/4 mb-4 animate-pulse"></div>
+        <div className="h-72 bg-gray-100 rounded animate-pulse"></div>
+      </div>
+    ),
+  }
+)
 
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
@@ -13,7 +49,6 @@ export default function ReportsPage() {
   const [totalEnrollments, setTotalEnrollments] = useState(0)
   const [pendingPayments, setPendingPayments] = useState(0)
   const [paidPayments, setPaidPayments] = useState(0)
-  const [classesByStatus, setClassesByStatus] = useState<Record<string, number>>({})
   const [recentEnrollments, setRecentEnrollments] = useState<any[]>([])
   const [students, setStudents] = useState<any[]>([])
   const [subjects, setSubjects] = useState<Record<string, string>>({})
@@ -32,7 +67,6 @@ export default function ReportsPage() {
         enrollmentsRes,
         pendingRes,
         paidRes,
-        classesStatusRes,
         recentRes,
       ] = await Promise.all([
         supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'student'),
@@ -41,7 +75,6 @@ export default function ReportsPage() {
         supabase.from('enrollments').select('id', { count: 'exact', head: true }),
         supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('payment_status', 'pending'),
         supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('payment_status', 'paid'),
-        supabase.from('classes').select('status'),
         supabase.from('enrollments').select('*').order('enrollment_date', { ascending: false }).limit(10),
       ])
 
@@ -66,36 +99,17 @@ export default function ReportsPage() {
       })
       setSubjects(subjectMap)
 
-      const statusCounts: Record<string, number> = {}
-      ;(classesStatusRes.data || []).forEach((c: any) => {
-        const status = c.status || 'unknown'
-        statusCounts[status] = (statusCounts[status] || 0) + 1
-      })
-
       setTotalStudents(studentsRes.count || 0)
       setTotalTeachers(teachersRes.count || 0)
       setTotalClasses(classesRes.count || 0)
       setTotalEnrollments(enrollmentsRes.count || 0)
       setPendingPayments(pendingRes.count || 0)
       setPaidPayments(paidRes.count || 0)
-      setClassesByStatus(statusCounts)
       setRecentEnrollments(recentRes.data || [])
     } catch (error) {
       console.error('Error loading reports:', error)
-      alert('Failed to load reports')
     }
     setLoading(false)
-  }
-
-  function getStatusColor(status: string) {
-    const colors: Record<string, string> = {
-      draft: 'bg-gray-100 text-gray-800',
-      open: 'bg-green-100 text-green-800',
-      full: 'bg-yellow-100 text-yellow-800',
-      completed: 'bg-blue-100 text-blue-800',
-      cancelled: 'bg-red-100 text-red-800',
-    }
-    return colors[status] || 'bg-gray-100 text-gray-800'
   }
 
   function getStudentName(studentId: string): string {
@@ -118,6 +132,8 @@ export default function ReportsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
+
+        {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Reports</h1>
           <button
@@ -128,6 +144,24 @@ export default function ReportsPage() {
           </button>
         </div>
 
+        {/* Quick link to Teacher Hours */}
+        <Link
+          href="/dashboard/reports/teachers"
+          className="block bg-white rounded-lg shadow-lg p-4 mb-6 hover:shadow-xl transition border border-gray-200"
+        >
+          <div className="flex items-center gap-3">
+            <div className="text-3xl">⏱️</div>
+            <div>
+              <div className="font-semibold text-gray-900">Teacher Hours Report</div>
+              <div className="text-sm text-gray-500">
+                Payroll-ready ledger of paid / scheduled / substituted hours per teacher
+              </div>
+            </div>
+            <span className="ml-auto text-gray-400 text-xl">→</span>
+          </div>
+        </Link>
+
+        {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="text-sm text-gray-500">Total Students</div>
@@ -147,39 +181,37 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Payment Status</h3>
-            <div className="flex justify-between items-center">
-              <div>
-                <div className="text-sm text-gray-500">Pending</div>
-                <div className="text-2xl font-bold text-yellow-600">{pendingPayments}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">Paid</div>
-                <div className="text-2xl font-bold text-green-600">{paidPayments}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">Total</div>
-                <div className="text-2xl font-bold text-blue-600">{totalEnrollments}</div>
-              </div>
+        {/* Payment Status */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-2">Payment Status</h3>
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-sm text-gray-500">Pending</div>
+              <div className="text-2xl font-bold text-yellow-600">{pendingPayments}</div>
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Classes by Status</h3>
-            <div className="grid grid-cols-3 gap-2">
-              {Object.entries(classesByStatus).map(([status, count]) => (
-                <div key={status} className="text-center">
-                  <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(status)}`}>
-                    {status}
-                  </span>
-                  <div className="text-xl font-bold">{count}</div>
-                </div>
-              ))}
+            <div>
+              <div className="text-sm text-gray-500">Paid</div>
+              <div className="text-2xl font-bold text-green-600">{paidPayments}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Total</div>
+              <div className="text-2xl font-bold text-blue-600">{totalEnrollments}</div>
             </div>
           </div>
         </div>
 
+        {/* ⭐ v3.19 — Analytics Section */}
+        <div className="mb-6">
+          <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase mb-3">
+            📊 Teacher Analytics
+          </h2>
+          <div className="space-y-4">
+            <TeacherWeeklyStats />
+            <SixWeekTrend />
+          </div>
+        </div>
+
+        {/* Recent Enrollments */}
         <div className="bg-white rounded-lg shadow-lg overflow-hidden">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Recent Enrollments</h3>

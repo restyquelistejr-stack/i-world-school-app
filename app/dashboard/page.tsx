@@ -1,19 +1,14 @@
 // app/dashboard/page.tsx
-// ⭐ v3.5: Room Pulse slots have hover tooltips with occupant details
-// ⭐ v3.6: Room Pulse slots are color-coded by booking type
+// ⭐ v3.19 — Removed TeacherWeeklyStats + SixWeekTrend (moved to Reports)
+// ⭐ v3.6 — Room Pulse slots color-coded by booking type
 'use client';
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import {
-  format, parseISO, getHours, getMinutes,
-  addWeeks, startOfWeek, endOfWeek, differenceInHours,
-  addDays
+  format, getHours, getMinutes, differenceInHours, addDays
 } from 'date-fns';
 import Link from 'next/link';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import TeacherWeeklyStats from './components/TeacherWeeklyStats';
-import SixWeekTrend from './components/SixWeekTrend';
 
 interface Booking {
   id: string;
@@ -28,24 +23,6 @@ interface Booking {
   course_name?: string;
   room_name?: string;
   student_count?: number;
-}
-
-interface DailyChartRow {
-  day: string;
-  date: string;
-  private: number;
-  trial: number;
-  group: number;
-  total: number;
-}
-
-interface WeeklyChartRow {
-  week: string;
-  startDate: string;
-  private: number;
-  trial: number;
-  group: number;
-  total: number;
 }
 
 interface TimelineItem {
@@ -74,86 +51,38 @@ interface SlotOccupant {
   end_time: string;
 }
 
-// ⭐ v3.6: Canonical color palette for each booking type
 const SOURCE_COLORS: Record<SessionSource | 'available', {
-  bg: string;           // tailwind class for cell background
-  bgHover: string;      // tailwind class for hover state
-  dot: string;          // tailwind class for legend dot
-  label: string;        // human label
+  bg: string;
+  bgHover: string;
+  dot: string;
+  label: string;
   icon: string;
 }> = {
-  private: {
-    bg: 'bg-emerald-500',
-    bgHover: 'hover:bg-emerald-600',
-    dot: 'bg-emerald-500',
-    label: 'Private',
-    icon: '📚',
-  },
-  trial: {
-    bg: 'bg-purple-500',
-    bgHover: 'hover:bg-purple-600',
-    dot: 'bg-purple-500',
-    label: 'Trial Private',
-    icon: '🎯',
-  },
-  trial_group: {
-    bg: 'bg-cyan-500',
-    bgHover: 'hover:bg-cyan-600',
-    dot: 'bg-cyan-500',
-    label: 'Trial Group',
-    icon: '👥',
-  },
-  group: {
-    bg: 'bg-rose-500',
-    bgHover: 'hover:bg-rose-600',
-    dot: 'bg-rose-500',
-    label: 'Group Class',
-    icon: '👥',
-  },
-  room_booking: {
-    bg: 'bg-gray-500',
-    bgHover: 'hover:bg-gray-600',
-    dot: 'bg-gray-500',
-    label: 'Room Booking',
-    icon: '🏫',
-  },
-  available: {
-    bg: 'bg-gray-100',
-    bgHover: 'hover:bg-gray-200',
-    dot: 'bg-gray-200',
-    label: 'Available',
-    icon: '✨',
-  },
+  private:     { bg: 'bg-emerald-500', bgHover: 'hover:bg-emerald-600', dot: 'bg-emerald-500', label: 'Private',       icon: '📚' },
+  trial:       { bg: 'bg-purple-500',  bgHover: 'hover:bg-purple-600',  dot: 'bg-purple-500',  label: 'Trial Private', icon: '🎯' },
+  trial_group: { bg: 'bg-cyan-500',    bgHover: 'hover:bg-cyan-600',    dot: 'bg-cyan-500',    label: 'Trial Group',   icon: '👥' },
+  group:       { bg: 'bg-rose-500',    bgHover: 'hover:bg-rose-600',    dot: 'bg-rose-500',    label: 'Group Class',   icon: '👥' },
+  room_booking:{ bg: 'bg-gray-500',    bgHover: 'hover:bg-gray-600',    dot: 'bg-gray-500',    label: 'Room Booking',  icon: '🏫' },
+  available:   { bg: 'bg-gray-100',    bgHover: 'hover:bg-gray-200',    dot: 'bg-gray-200',    label: 'Available',     icon: '✨' },
 };
 
 export default function DashboardPage() {
-  const [todayClasses, setTodayClasses] = useState<Booking[]>([]);
   const [pendingAttendance, setPendingAttendance] = useState(0);
-
   const [pendingSubstitutes, setPendingSubstitutes] = useState(0);
   const [roomNeededCount, setRoomNeededCount] = useState(0);
-
-  const [dailyClassData, setDailyClassData] = useState<DailyChartRow[]>([]);
-  const [forecastData, setForecastData] = useState<WeeklyChartRow[]>([]);
 
   const [roomPulseData, setRoomPulseData] = useState<{
     id: string;
     name: string;
     capacity: number;
-    slots: {
-      time: string;
-      occupied: boolean;
-      occupant?: SlotOccupant;
-    }[]
+    slots: { time: string; occupied: boolean; occupant?: SlotOccupant }[]
   }[]>([]);
 
   const [lowStockBooks, setLowStockBooks] = useState<any[]>([]);
-
   const [todaysTeachers, setTodaysTeachers] = useState<string[]>([]);
   const [todaysStudents, setTodaysStudents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
-
   const [timelineItems, setTimelineItems] = useState<TimelineItem[]>([]);
 
   useEffect(() => {
@@ -181,10 +110,7 @@ export default function DashboardPage() {
         .from('substitute_assignments')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
-
-      if (!error && count !== null) {
-        setPendingSubstitutes(count);
-      }
+      if (!error && count !== null) setPendingSubstitutes(count);
     } catch (error) {
       console.error('Error loading pending substitutes:', error);
     }
@@ -197,10 +123,7 @@ export default function DashboardPage() {
         .select('*', { count: 'exact', head: true })
         .eq('needs_attention', true)
         .eq('attention_reason', 'room_unassigned');
-
-      if (!error && count !== null) {
-        setRoomNeededCount(count);
-      }
+      if (!error && count !== null) setRoomNeededCount(count);
     } catch (error) {
       console.error('Error loading room needed count:', error);
     }
@@ -337,7 +260,6 @@ export default function DashboardPage() {
       const [h, m] = startTime.split(':').map(Number);
       const endHour = h + duration;
       const endTime = `${String(endHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
       const isGroupTrial = t.session_type === 'group';
 
       sessions.push({
@@ -455,7 +377,6 @@ export default function DashboardPage() {
       if (b.class_id) classIds.add(b.class_id);
       if (b.student_id) studentIds.add(b.student_id);
     });
-
     trials.forEach((t: any) => {
       if (t.selected_teacher_id) teacherIds.add(t.selected_teacher_id);
       if (t.course_id) courseIds.add(t.course_id);
@@ -463,26 +384,19 @@ export default function DashboardPage() {
       if (t.room_id) roomIds.add(t.room_id);
       if (t.student_id) studentIds.add(t.student_id);
     });
-
     groupSessions.forEach((g: any) => {
       if (g.teacher_id) teacherIds.add(g.teacher_id);
       if (g.room_id) roomIds.add(g.room_id);
       if (g.group_class_id) groupClassIds.add(g.group_class_id);
     });
-
     roomBookings.forEach((r: any) => {
       if (r.teacher_id) teacherIds.add(r.teacher_id);
       if (r.room_id) roomIds.add(r.room_id);
     });
 
     const [
-      teachersData,
-      coursesData,
-      modulesData,
-      roomsData,
-      classesData,
-      studentsData,
-      groupClassesData,
+      teachersData, coursesData, modulesData, roomsData,
+      classesData, studentsData, groupClassesData,
     ] = await Promise.all([
       teacherIds.size > 0
         ? supabase.from('users').select('id, full_name').in('id', Array.from(teacherIds))
@@ -509,22 +423,16 @@ export default function DashboardPage() {
 
     const teacherMap: Record<string, string> = {};
     (teachersData.data || []).forEach((t: any) => { teacherMap[t.id] = t.full_name; });
-
     const courseMap: Record<string, string> = {};
     (coursesData.data || []).forEach((c: any) => { courseMap[c.id] = c.name; });
-
     const moduleMap: Record<string, string> = {};
     (modulesData.data || []).forEach((m: any) => { moduleMap[m.id] = m.title; });
-
     const roomMap: Record<string, string> = {};
     (roomsData.data || []).forEach((r: any) => { roomMap[r.id] = r.name; });
-
     const classCodeMap: Record<string, string> = {};
     (classesData.data || []).forEach((c: any) => { classCodeMap[c.id] = c.class_code; });
-
     const studentMap: Record<string, string> = {};
     (studentsData.data || []).forEach((s: any) => { studentMap[s.id] = s.full_name; });
-
     const groupClassMap: Record<string, any> = {};
     (groupClassesData.data || []).forEach((g: any) => { groupClassMap[g.id] = g; });
 
@@ -543,7 +451,6 @@ export default function DashboardPage() {
         subtitle: b.class_id ? classCodeMap[b.class_id] : undefined,
         teacher_name: teacherMap[b.teacher_id] || 'Unknown',
         room_name: b.room_id ? roomMap[b.room_id] : 'TBD',
-        student_count: undefined,
         durationHours: differenceInHours(end, start),
         status: b.status,
         raw: b,
@@ -557,10 +464,8 @@ export default function DashboardPage() {
       const [h, m] = startTime.split(':').map(Number);
       const endHour = h + duration;
       const endTime = `${String(endHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
       const start = new Date(`${t.selected_date}T${startTime}:00`);
       const end = new Date(`${t.selected_date}T${endTime}:00`);
-
       const isGroupTrial = t.session_type === 'group';
 
       items.push({
@@ -585,7 +490,6 @@ export default function DashboardPage() {
       const endTime = (g.end_time as string).slice(0, 5);
       const start = new Date(`${g.session_date}T${startTime}:00`);
       const end = new Date(`${g.session_date}T${endTime}:00`);
-
       const groupClass = groupClassMap[g.group_class_id];
 
       items.push({
@@ -607,7 +511,6 @@ export default function DashboardPage() {
     roomBookings.forEach((r: any) => {
       const start = new Date(r.start_time);
       const end = new Date(r.end_time);
-
       items.push({
         id: `room-${r.id}`,
         source: 'room_booking',
@@ -667,9 +570,6 @@ export default function DashboardPage() {
             : Promise.resolve({ data: [] })
         ]);
 
-        const teacherMap = Object.fromEntries(teachersData.data?.map(t => [t.id, t.full_name]) || []);
-        const courseMap = Object.fromEntries(coursesData.data?.map(c => [c.id, c.name]) || []);
-
         const roomMap: Record<string, { name: string; capacity: number }> = {};
         (allRoomsData.data || []).forEach((r: any) => {
           roomMap[r.id] = { name: r.name, capacity: r.capacity || 1 };
@@ -678,18 +578,9 @@ export default function DashboardPage() {
         const uniqueStudentIds = [...new Set(enrollmentsData.data?.map(e => e.student_id) || [])];
         setTodaysStudents(uniqueStudentIds);
 
-        const enriched = bookings.map((b) => ({
-          ...b,
-          teacher_name: teacherMap[b.teacher_id] || 'Unknown',
-          course_name: courseMap[b.course_id] || 'Unknown Course',
-          room_name: roomMap[b.room_id]?.name || 'TBD',
-          student_count: enrollmentsData.data?.filter((e: any) => e.class_id === b.class_id).length || 0,
-        }));
-
-        setTodayClasses(enriched);
-
+        // Pending attendance count (used by FAB)
         let pending = 0;
-        for (const b of enriched) {
+        for (const b of bookings) {
           const { count } = await supabase
             .from('attendance')
             .select('*', { count: 'exact', head: true })
@@ -698,7 +589,7 @@ export default function DashboardPage() {
         }
         setPendingAttendance(pending);
 
-        // Room Pulse — color-coded
+        // Room Pulse
         const roomSlots: Record<string, {
           id: string;
           name: string;
@@ -723,10 +614,7 @@ export default function DashboardPage() {
         const todayDateStr = format(todayStart, 'yyyy-MM-dd');
 
         const allTodaySessions = await loadAllSessionsInRange(
-          todayISO,
-          todayISOEnd,
-          todayDateStr,
-          todayDateStr
+          todayISO, todayISOEnd, todayDateStr, todayDateStr
         );
 
         allTodaySessions.forEach((s) => {
@@ -755,72 +643,6 @@ export default function DashboardPage() {
         setRoomPulseData(Object.values(roomSlots));
       }
 
-      const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const weekStart = new Date();
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      weekStart.setHours(0, 0, 0, 0);
-
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
-
-      const weekStartStr = format(weekStart, 'yyyy-MM-dd');
-      const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
-
-      const weekSessions = await loadAllSessionsInRange(
-        weekStart.toISOString(),
-        weekEnd.toISOString(),
-        weekStartStr,
-        weekEndStr
-      );
-
-      const dailyData: DailyChartRow[] = weekDays.map((day, index) => {
-        const dayDate = addDays(weekStart, index);
-        const dayDateStr = format(dayDate, 'yyyy-MM-dd');
-        const daySessions = weekSessions.filter(s => s.date === dayDateStr);
-
-        return {
-          day,
-          date: dayDateStr,
-          private: daySessions.filter(s => s.source === 'private').length,
-          trial: daySessions.filter(s => s.source === 'trial' || s.source === 'trial_group').length,
-          group: daySessions.filter(s => s.source === 'group').length,
-          total: daySessions.filter(s => s.source !== 'room_booking').length,
-        };
-      });
-
-      setDailyClassData(dailyData);
-
-      const today = new Date();
-      const thisWeekStart = startOfWeek(today, { weekStartsOn: 1 });
-
-      const forecastRows: WeeklyChartRow[] = [];
-
-      for (let i = 0; i < 7; i++) {
-        const weekStartDate = addWeeks(thisWeekStart, i);
-        const weekEndDate = endOfWeek(weekStartDate, { weekStartsOn: 1 });
-        const weekStartStr = format(weekStartDate, 'yyyy-MM-dd');
-        const weekEndStr = format(weekEndDate, 'yyyy-MM-dd');
-
-        const weekSessions = await loadAllSessionsInRange(
-          weekStartDate.toISOString(),
-          weekEndDate.toISOString(),
-          weekStartStr,
-          weekEndStr
-        );
-
-        forecastRows.push({
-          week: i === 0 ? 'This Wk' : `W+${i}`,
-          startDate: weekStartStr,
-          private: weekSessions.filter(s => s.source === 'private').length,
-          trial: weekSessions.filter(s => s.source === 'trial' || s.source === 'trial_group').length,
-          group: weekSessions.filter(s => s.source === 'group').length,
-          total: weekSessions.filter(s => s.source !== 'room_booking').length,
-        });
-      }
-
-      setForecastData(forecastRows);
-
       const { data: booksData } = await supabase
         .from('inventory_books')
         .select('title, available_quantity, reorder_quantity');
@@ -848,38 +670,6 @@ export default function DashboardPage() {
   };
 
   const groupedTimeline = groupTimeline(timelineItems);
-
-  const renderStackLabel = (props: any) => {
-    const { x, y, width, value } = props;
-    if (!value || value === 0) return null;
-    return (
-      <text x={x + width / 2} y={y - 6} fill="#1e293b" fontSize={11} fontWeight="bold" textAnchor="middle">
-        {value}
-      </text>
-    );
-  };
-
-  const renderTotalLabel = (props: any) => {
-    const { x, y, width, index } = props;
-    const total = dailyClassData[index]?.total || 0;
-    if (!total) return null;
-    return (
-      <text x={x + width / 2} y={y - 6} fill="#1e293b" fontSize={12} fontWeight="bold" textAnchor="middle">
-        {total}
-      </text>
-    );
-  };
-
-  const renderWeeklyTotalLabel = (props: any) => {
-    const { x, y, width, index } = props;
-    const total = forecastData[index]?.total || 0;
-    if (!total) return null;
-    return (
-      <text x={x + width / 2} y={y - 6} fill="#1e293b" fontSize={12} fontWeight="bold" textAnchor="middle">
-        {total}
-      </text>
-    );
-  };
 
   const getSourceBadge = (source: TimelineItem['source']) => {
     const map = {
@@ -922,27 +712,17 @@ export default function DashboardPage() {
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse ring-2 ring-white"></span>
               </div>
               <div className="flex flex-col leading-tight">
-                <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold">
-                  Teacher Subs
-                </span>
-                <span className="text-sm font-bold text-amber-900">
-                  {pendingSubstitutes} Pending
-                </span>
+                <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold">Teacher Subs</span>
+                <span className="text-sm font-bold text-amber-900">{pendingSubstitutes} Pending</span>
               </div>
-              <span className="text-amber-600 text-sm font-bold ml-1 group-hover:translate-x-0.5 transition-transform">
-                →
-              </span>
+              <span className="text-amber-600 text-sm font-bold ml-1 group-hover:translate-x-0.5 transition-transform">→</span>
             </Link>
           ) : (
             <div key="teacher-subs-card" className="flex items-center gap-3 px-4 py-2 rounded-xl shadow-sm border border-emerald-200 bg-gradient-to-r from-emerald-50 to-green-50">
               <span className="text-xl">✅</span>
               <div className="flex flex-col leading-tight">
-                <span className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">
-                  Teacher Subs
-                </span>
-                <span className="text-sm font-bold text-emerald-900">
-                  All Clear
-                </span>
+                <span className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">Teacher Subs</span>
+                <span className="text-sm font-bold text-emerald-900">All Clear</span>
               </div>
             </div>
           )}
@@ -958,27 +738,17 @@ export default function DashboardPage() {
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse ring-2 ring-white"></span>
               </div>
               <div className="flex flex-col leading-tight">
-                <span className="text-[10px] uppercase tracking-wider text-orange-700 font-semibold">
-                  Rooms Needed
-                </span>
-                <span className="text-sm font-bold text-orange-900">
-                  {roomNeededCount} Pending
-                </span>
+                <span className="text-[10px] uppercase tracking-wider text-orange-700 font-semibold">Rooms Needed</span>
+                <span className="text-sm font-bold text-orange-900">{roomNeededCount} Pending</span>
               </div>
-              <span className="text-orange-600 text-sm font-bold ml-1 group-hover:translate-x-0.5 transition-transform">
-                →
-              </span>
+              <span className="text-orange-600 text-sm font-bold ml-1 group-hover:translate-x-0.5 transition-transform">→</span>
             </Link>
           ) : (
             <div key="rooms-needed-card" className="flex items-center gap-3 px-4 py-2 rounded-xl shadow-sm border border-emerald-200 bg-gradient-to-r from-emerald-50 to-green-50">
               <span className="text-xl">✅</span>
               <div className="flex flex-col leading-tight">
-                <span className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">
-                  Rooms Needed
-                </span>
-                <span className="text-sm font-bold text-emerald-900">
-                  All Clear
-                </span>
+                <span className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">Rooms Needed</span>
+                <span className="text-sm font-bold text-emerald-900">All Clear</span>
               </div>
             </div>
           )}
@@ -1041,148 +811,20 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 3. CHARTS SECTION */}
-      <div className="mb-6">
-        <div className="sticky top-[160px] z-10 bg-gray-50/90 backdrop-blur-sm py-3 -mx-4 px-4 mb-2 border-b border-gray-200/50 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">Class Daily / Weekly Stats</h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Sun - Sat Count</h3>
-            <div className="h-56 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyClassData} margin={{ top: 20, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} allowDecimals={false} />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload || payload.length === 0) return null;
-                      const row = payload[0].payload as DailyChartRow;
-                      return (
-                        <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
-                          <div className="font-bold text-gray-800 mb-1">{label} · {row.date}</div>
-                          <div className="flex items-center gap-2 text-emerald-700">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span>Private: <strong>{row.private}</strong></span>
-                          </div>
-                          <div className="flex items-center gap-2 text-purple-700">
-                            <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-                            <span>Trial: <strong>{row.trial}</strong></span>
-                          </div>
-                          <div className="flex items-center gap-2 text-rose-700">
-                            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                            <span>Group: <strong>{row.group}</strong></span>
-                          </div>
-                          <div className="mt-1 pt-1 border-t border-gray-100 text-gray-700">
-                            <strong>Total: {row.total}</strong>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={24}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: 11, color: '#6b7280', paddingTop: 8 }}
-                  />
-                  <Bar dataKey="private" name="Private" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} barSize={32} />
-                  <Bar dataKey="trial" name="Trial" stackId="a" fill="#a855f7" radius={[0, 0, 0, 0]} barSize={32} />
-                  <Bar dataKey="group" name="Group" stackId="a" fill="#f43f5e" radius={[4, 4, 0, 0]} barSize={32} label={renderTotalLabel} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Next 7 Weeks Forecast</h3>
-            <div className="h-56 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={forecastData} margin={{ top: 20, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} allowDecimals={false} />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload || payload.length === 0) return null;
-                      const row = payload[0].payload as WeeklyChartRow;
-                      return (
-                        <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
-                          <div className="font-bold text-gray-800 mb-1">{label} · from {row.startDate}</div>
-                          <div className="flex items-center gap-2 text-emerald-700">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span>Private: <strong>{row.private}</strong></span>
-                          </div>
-                          <div className="flex items-center gap-2 text-purple-700">
-                            <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-                            <span>Trial: <strong>{row.trial}</strong></span>
-                          </div>
-                          <div className="flex items-center gap-2 text-rose-700">
-                            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                            <span>Group: <strong>{row.group}</strong></span>
-                          </div>
-                          <div className="mt-1 pt-1 border-t border-gray-100 text-gray-700">
-                            <strong>Total: {row.total}</strong>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={24}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: 11, color: '#6b7280', paddingTop: 8 }}
-                  />
-                  <Bar dataKey="private" name="Private" stackId="a" fill="#10b981" barSize={32} />
-                  <Bar dataKey="trial" name="Trial" stackId="a" fill="#a855f7" barSize={32} />
-                  <Bar dataKey="group" name="Group" stackId="a" fill="#f43f5e" radius={[4, 4, 0, 0]} barSize={32} label={renderWeeklyTotalLabel} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. ROOM PULSE — v3.6: color-coded by booking type */}
+      {/* 3. ROOM PULSE */}
       <div className="mb-6">
         <div className="sticky top-[160px] z-10 bg-gray-50/90 backdrop-blur-sm py-3 -mx-4 px-4 mb-2 border-b border-gray-200/50 shadow-sm">
           <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">Room Pulse</h2>
         </div>
 
-        {/* ⭐ v3.6: Color legend */}
         <div className="flex items-center gap-x-4 gap-y-2 mb-3 text-xs text-gray-600 bg-gray-50 p-2.5 rounded-lg flex-wrap">
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.private.dot}`}></span>
-            <span>📚 Private</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.trial.dot}`}></span>
-            <span>🎯 Trial Private</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.trial_group.dot}`}></span>
-            <span>👥 Trial Group</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.group.dot}`}></span>
-            <span>👥 Group Class</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.room_booking.dot}`}></span>
-            <span>🏫 Room Booking</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-3 h-3 rounded ${SOURCE_COLORS.available.dot}`}></span>
-            <span className="text-gray-400">Available</span>
-          </span>
-          <span className="text-[10px] text-gray-400 ml-auto">
-            Hover any cell for details
-          </span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.private.dot}`}></span><span>📚 Private</span></span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.trial.dot}`}></span><span>🎯 Trial Private</span></span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.trial_group.dot}`}></span><span>👥 Trial Group</span></span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.group.dot}`}></span><span>👥 Group Class</span></span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.room_booking.dot}`}></span><span>🏫 Room Booking</span></span>
+          <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${SOURCE_COLORS.available.dot}`}></span><span className="text-gray-400">Available</span></span>
+          <span className="text-[10px] text-gray-400 ml-auto">Hover any cell for details</span>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -1202,44 +844,27 @@ export default function DashboardPage() {
                   </div>
                   {room.slots.map((slot, idx) => {
                     const occ = slot.occupant;
-                    // ⭐ v3.6: pick color based on occupant source (or 'available')
-                    const palette = occ
-                      ? SOURCE_COLORS[occ.source] || SOURCE_COLORS.available
-                      : SOURCE_COLORS.available;
+                    const palette = occ ? SOURCE_COLORS[occ.source] || SOURCE_COLORS.available : SOURCE_COLORS.available;
                     const occMeta = occ ? SOURCE_COLORS[occ.source] : null;
 
                     return (
                       <div
                         key={`${room.id}-slot-${idx}`}
-                        className={`group relative h-6 border-r border-gray-100 last:border-r-0 transition-colors cursor-pointer ${
-                          palette.bg
-                        } ${palette.bgHover}`}
+                        className={`group relative h-6 border-r border-gray-100 last:border-r-0 transition-colors cursor-pointer ${palette.bg} ${palette.bgHover}`}
                       >
-                        {/* Tooltip */}
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-30 pointer-events-none">
                           <div className="bg-gray-900 text-white text-[10px] rounded-lg shadow-xl px-3 py-2 min-w-[180px] max-w-[260px] whitespace-normal">
                             {occ && occMeta ? (
                               <>
                                 <div className="flex items-center gap-1.5 font-semibold mb-1">
-                                  <span>{occMeta.icon}</span>
-                                  <span>{occMeta.label}</span>
+                                  <span>{occMeta.icon}</span><span>{occMeta.label}</span>
                                 </div>
-                                <div className="text-[10px] text-gray-200 mb-1 truncate">
-                                  {occ.title}
-                                </div>
-                                {occ.teacher_name && (
-                                  <div className="text-[10px] text-gray-300">
-                                    👨‍🏫 {occ.teacher_name}
-                                  </div>
-                                )}
-                                <div className="text-[10px] text-gray-300 mt-0.5">
-                                  🕐 {occ.start_time} – {occ.end_time}
-                                </div>
+                                <div className="text-[10px] text-gray-200 mb-1 truncate">{occ.title}</div>
+                                {occ.teacher_name && <div className="text-[10px] text-gray-300">👨‍🏫 {occ.teacher_name}</div>}
+                                <div className="text-[10px] text-gray-300 mt-0.5">🕐 {occ.start_time} – {occ.end_time}</div>
                               </>
                             ) : (
-                              <div className="text-[10px] text-gray-300">
-                                ✨ Available
-                              </div>
+                              <div className="text-[10px] text-gray-300">✨ Available</div>
                             )}
                             <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                           </div>
@@ -1250,38 +875,18 @@ export default function DashboardPage() {
                 </div>
               ))}
               {roomPulseData.length === 0 && (
-                <div className="p-8 text-center text-gray-400 text-sm">
-                  No active rooms found
-                </div>
+                <div className="p-8 text-center text-gray-400 text-sm">No active rooms found</div>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* 5. TEACHER WEEKLY STATS */}
-      <div className="mb-6">
-        <div className="sticky top-[160px] z-10 bg-gray-50/90 backdrop-blur-sm py-3 -mx-4 px-4 mb-2 border-b border-gray-200/50 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">👨‍🏫 Teacher Weekly Stats</h2>
-        </div>
-        <TeacherWeeklyStats />
-      </div>
-
-      {/* 6. 6-WEEK TREND */}
-      <div className="mb-6">
-        <div className="sticky top-[160px] z-10 bg-gray-50/90 backdrop-blur-sm py-3 -mx-4 px-4 mb-2 border-b border-gray-200/50 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">📈 6-Week Trend</h2>
-        </div>
-        <SixWeekTrend />
-      </div>
-
-      {/* 7. TODAY'S TIMELINE */}
+      {/* 4. TODAY'S TIMELINE */}
       <div className="mb-12">
         <div className="sticky top-[160px] z-10 bg-gray-50/90 backdrop-blur-sm py-3 -mx-4 px-4 mb-2 border-b border-gray-200/50 shadow-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">
-              Today's Timeline
-            </h2>
+            <h2 className="text-sm font-bold text-gray-800 tracking-wide uppercase">Today's Timeline</h2>
             <span className="text-xs text-gray-500">
               {timelineItems.length} item{timelineItems.length !== 1 ? 's' : ''}
             </span>
@@ -1312,9 +917,7 @@ export default function DashboardPage() {
                           <div
                             key={item.id}
                             className={`flex items-center justify-between p-3 rounded-lg border transition ${
-                              isRoomBooking
-                                ? 'bg-gray-50 border-gray-200 hover:border-gray-400'
-                                : 'bg-gray-50 border-gray-100 hover:border-blue-300'
+                              isRoomBooking ? 'bg-gray-50 border-gray-200 hover:border-gray-400' : 'bg-gray-50 border-gray-100 hover:border-blue-300'
                             }`}
                           >
                             <div className="flex items-center gap-4 min-w-0 flex-1">
@@ -1332,15 +935,9 @@ export default function DashboardPage() {
                                   <div className="text-xs text-gray-500 truncate">{item.subtitle}</div>
                                 )}
                                 <div className="text-xs text-gray-500 flex items-center gap-2 flex-wrap mt-0.5">
-                                  {item.teacher_name && (
-                                    <span>👨‍🏫 {item.teacher_name}</span>
-                                  )}
-                                  {item.teacher_name && item.room_name && (
-                                    <span className="text-gray-300">•</span>
-                                  )}
-                                  {item.room_name && (
-                                    <span>🏫 {item.room_name}</span>
-                                  )}
+                                  {item.teacher_name && <span>👨‍🏫 {item.teacher_name}</span>}
+                                  {item.teacher_name && item.room_name && <span className="text-gray-300">•</span>}
+                                  {item.room_name && <span>🏫 {item.room_name}</span>}
                                 </div>
                               </div>
                             </div>
@@ -1368,7 +965,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 8. Floating Action Button */}
+      {/* Floating Action Button */}
       <Link href="/dashboard/staff/attendance">
         <button className={`fixed bottom-8 right-8 flex items-center gap-3 px-6 py-3 rounded-full shadow-lg text-white transition-all hover:scale-105 ${pendingAttendance > 0 ? 'bg-orange-600 animate-pulse' : 'bg-blue-600'}`}>
           <span className="text-xl">📋</span>
