@@ -634,11 +634,11 @@ export default function ManageClasses() {
               🏠 Room Booking
             </button>
           </Link>
-          <Link href="/dashboard/analytics/trials">
+{/*           <Link href="/dashboard/analytics/trials">
             <button className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition shadow-sm flex items-center gap-2 text-sm">
               📊 Trial Analytics
             </button>
-          </Link>
+          </Link> */}
           <Link href="/dashboard/substitutes/needed">
             <button className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition shadow-sm flex items-center gap-2 text-sm relative">
               🔄 Substitutes
